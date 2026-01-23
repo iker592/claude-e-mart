@@ -6,10 +6,23 @@ export interface ToolCall {
   isError?: boolean;
 }
 
+export interface TextBlock {
+  type: "text";
+  content: string;
+}
+
+export interface ToolUseBlock {
+  type: "tool_use";
+  tool: ToolCall;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock;
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  contentBlocks?: ContentBlock[];
   toolCalls?: ToolCall[];
   timestamp: Date;
 }

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { Message, ChatEvent, ToolCall } from "../types/chat";
+import type { Message, ChatEvent, ToolCall, ContentBlock } from "../types/chat";
 
 const API_URL = "http://localhost:8000";
 
@@ -21,6 +21,8 @@ export function useChat() {
     const assistantId = crypto.randomUUID();
     let assistantContent = "";
     const toolCalls: ToolCall[] = [];
+    const contentBlocks: ContentBlock[] = [];
+    let currentTextBlockIndex = -1;
 
     try {
       const response = await fetch(`${API_URL}/api/chat`, {
@@ -58,6 +60,20 @@ export function useChat() {
               // Handle both full text and text deltas (token streaming)
               if ((event.type === "text" || event.type === "text_delta") && event.content) {
                 assistantContent += event.content;
+
+                // Add or update text block
+                if (currentTextBlockIndex === -1 || contentBlocks[currentTextBlockIndex]?.type !== "text") {
+                  // Start a new text block
+                  currentTextBlockIndex = contentBlocks.length;
+                  contentBlocks.push({ type: "text", content: event.content });
+                } else {
+                  // Append to existing text block
+                  const textBlock = contentBlocks[currentTextBlockIndex];
+                  if (textBlock.type === "text") {
+                    textBlock.content += event.content;
+                  }
+                }
+
                 setMessages((prev) => {
                   const updated = [...prev];
                   const lastIdx = updated.findIndex((m) => m.id === assistantId);
@@ -65,12 +81,14 @@ export function useChat() {
                     updated[lastIdx] = {
                       ...updated[lastIdx],
                       content: assistantContent,
+                      contentBlocks: [...contentBlocks],
                     };
                   } else {
                     updated.push({
                       id: assistantId,
                       role: "assistant",
                       content: assistantContent,
+                      contentBlocks: [...contentBlocks],
                       toolCalls: [],
                       timestamp: new Date(),
                     });
@@ -78,11 +96,17 @@ export function useChat() {
                   return updated;
                 });
               } else if (event.type === "tool_use" && event.tool_id) {
-                toolCalls.push({
+                const newTool: ToolCall = {
                   id: event.tool_id,
                   name: event.tool_name || "unknown",
                   input: event.tool_input || {},
-                });
+                };
+                toolCalls.push(newTool);
+
+                // Add tool use block and reset text block index
+                contentBlocks.push({ type: "tool_use", tool: newTool });
+                currentTextBlockIndex = -1;
+
                 setMessages((prev) => {
                   const updated = [...prev];
                   const lastIdx = updated.findIndex((m) => m.id === assistantId);
@@ -90,6 +114,7 @@ export function useChat() {
                     updated[lastIdx] = {
                       ...updated[lastIdx],
                       toolCalls: [...toolCalls],
+                      contentBlocks: [...contentBlocks],
                     };
                   }
                   return updated;
@@ -99,6 +124,19 @@ export function useChat() {
                 if (toolIdx >= 0) {
                   toolCalls[toolIdx].result = event.content;
                   toolCalls[toolIdx].isError = event.is_error;
+
+                  // Update the tool in content blocks as well
+                  const blockIdx = contentBlocks.findIndex(
+                    (b) => b.type === "tool_use" && b.tool.id === event.tool_id
+                  );
+                  if (blockIdx >= 0) {
+                    const block = contentBlocks[blockIdx];
+                    if (block.type === "tool_use") {
+                      block.tool.result = event.content;
+                      block.tool.isError = event.is_error;
+                    }
+                  }
+
                   setMessages((prev) => {
                     const updated = [...prev];
                     const lastIdx = updated.findIndex((m) => m.id === assistantId);
@@ -106,6 +144,7 @@ export function useChat() {
                       updated[lastIdx] = {
                         ...updated[lastIdx],
                         toolCalls: [...toolCalls],
+                        contentBlocks: [...contentBlocks],
                       };
                     }
                     return updated;
