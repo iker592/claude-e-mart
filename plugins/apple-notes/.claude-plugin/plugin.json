@@ -1,0 +1,10 @@
+{
+  "name": "apple-notes",
+  "version": "1.0.0",
+  "description": "Read, create, and manage Apple Notes on macOS via AppleScript",
+  "author": {
+    "name": "iker592"
+  },
+  "license": "MIT",
+  "keywords": ["apple-notes", "macos", "notes", "applescript", "memorybench"]
+}
