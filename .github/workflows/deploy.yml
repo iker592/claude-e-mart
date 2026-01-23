@@ -2,12 +2,9 @@
 # Deploys to production after merge to main using AWS CDK
 #
 # Required GitHub Secrets:
-#   AWS_ROLE_TO_ASSUME: ARN of the IAM role for OIDC authentication
-#   AWS_ACCOUNT_ID: AWS account ID for deployment
-#   ANTHROPIC_API_KEY: (optional) API key for Claude agent
+#   AWS_ROLE_ARN: ARN of the IAM role for OIDC authentication
 #
-# Required GitHub Variables:
-#   AWS_REGION: AWS region for deployment (e.g., us-east-1)
+# See .github/AWS_OIDC_SETUP.md for setup instructions
 
 name: Production Deploy
 
@@ -207,7 +204,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: github-actions-staging-${{ github.sha }}
 
@@ -338,7 +335,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: github-actions-production-${{ github.sha }}
 
