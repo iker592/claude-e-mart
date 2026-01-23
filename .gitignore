@@ -1,0 +1,21 @@
+# Environment files
+.env
+*.env.local
+
+# AI agent local config
+.ai/agents/
+
+# Vite cache
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+.python-version
+
+# Node
+node_modules/
+dist/
+
+# OS
+.DS_Store
