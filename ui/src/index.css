@@ -24,6 +24,18 @@
   --accent-hover: #2563eb;
 }
 
+.claude {
+  --bg-primary: #2a2520;
+  --bg-secondary: #3d3530;
+  --bg-tertiary: #4a423b;
+  --text-primary: #f5f0e8;
+  --text-secondary: #d4c9bc;
+  --text-muted: #a89f94;
+  --border-color: #5a504a;
+  --accent: #d97757;
+  --accent-hover: #c4654a;
+}
+
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);

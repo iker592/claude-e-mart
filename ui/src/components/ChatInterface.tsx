@@ -72,8 +72,9 @@ export function ChatInterface() {
             className="p-2 rounded-md transition-colors"
             style={{ color: "var(--text-secondary)" }}
             aria-label="Toggle theme"
+            title={`Theme: ${theme}`}
           >
-            {theme === "light" ? (
+            {theme === "light" && (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -82,7 +83,18 @@ export function ChatInterface() {
                   d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
                 />
               </svg>
-            ) : (
+            )}
+            {theme === "dark" && (
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+                />
+              </svg>
+            )}
+            {theme === "claude" && (
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
