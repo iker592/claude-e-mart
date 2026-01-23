@@ -15,7 +15,7 @@ export interface Message {
 }
 
 export interface ChatEvent {
-  type: "text" | "tool_use" | "tool_result" | "result" | "error";
+  type: "text" | "text_delta" | "tool_use" | "tool_result" | "result" | "error";
   content?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;

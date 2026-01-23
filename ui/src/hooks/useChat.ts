@@ -55,7 +55,8 @@ export function useChat() {
             try {
               const event: ChatEvent = JSON.parse(data);
 
-              if (event.type === "text" && event.content) {
+              // Handle both full text and text deltas (token streaming)
+              if ((event.type === "text" || event.type === "text_delta") && event.content) {
                 assistantContent += event.content;
                 setMessages((prev) => {
                   const updated = [...prev];
