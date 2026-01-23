@@ -24,7 +24,14 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="border-t bg-white p-4">
+    <form
+      onSubmit={handleSubmit}
+      className="p-4"
+      style={{
+        backgroundColor: "var(--bg-secondary)",
+        borderTop: "1px solid var(--border-color)",
+      }}
+    >
       <div className="flex gap-2">
         <textarea
           value={input}
@@ -33,12 +40,21 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           placeholder="Type a message... (Shift+Enter for new line)"
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none rounded-lg border border-gray-300 px-4 py-2 text-gray-900 focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500"
+          className="flex-1 resize-none rounded-lg px-4 py-2 focus:outline-none focus:ring-2 transition-colors"
+          style={{
+            backgroundColor: "var(--bg-tertiary)",
+            borderColor: "var(--border-color)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border-color)",
+          }}
         />
         <button
           type="submit"
           disabled={disabled || !input.trim()}
-          className="rounded-lg bg-blue-500 px-6 py-2 text-white hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          className="rounded-lg px-6 py-2 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{
+            backgroundColor: disabled || !input.trim() ? "var(--text-muted)" : "var(--accent)",
+          }}
         >
           Send
         </button>

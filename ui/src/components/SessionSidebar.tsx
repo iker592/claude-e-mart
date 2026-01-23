@@ -89,28 +89,39 @@ export function SessionSidebar({
       {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-30 z-40 transition-opacity"
+          className="fixed inset-0 z-40 transition-opacity"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.3)" }}
           onClick={onClose}
         />
       )}
 
       {/* Sidebar */}
       <div
-        className={`fixed left-0 top-0 h-full w-64 bg-white shadow-lg z-50 transform transition-transform duration-300 ease-in-out ${
+        className={`fixed left-0 top-0 h-full w-72 shadow-lg z-50 transform transition-transform duration-300 ease-in-out ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
+        style={{
+          backgroundColor: "var(--bg-secondary)",
+          borderRight: "1px solid var(--border-color)",
+        }}
       >
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b">
-            <h2 className="text-lg font-semibold text-gray-800">Chat History</h2>
+          <div
+            className="flex items-center justify-between p-4"
+            style={{ borderBottom: "1px solid var(--border-color)" }}
+          >
+            <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+              Chat History
+            </h2>
             <button
               onClick={onClose}
-              className="p-1 rounded-md hover:bg-gray-100 transition-colors"
+              className="p-1 rounded-md transition-colors hover:opacity-70"
+              style={{ color: "var(--text-secondary)" }}
               aria-label="Close sidebar"
             >
               <svg
-                className="w-5 h-5 text-gray-600"
+                className="w-5 h-5"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -129,7 +140,10 @@ export function SessionSidebar({
           <div className="p-3">
             <button
               onClick={handleNewChat}
-              className="w-full flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 text-white rounded-lg transition-colors"
+              style={{
+                backgroundColor: "var(--accent)",
+              }}
             >
               <svg
                 className="w-5 h-5"
@@ -152,10 +166,13 @@ export function SessionSidebar({
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                <div
+                  className="animate-spin rounded-full h-6 w-6 border-b-2"
+                  style={{ borderColor: "var(--accent)" }}
+                ></div>
               </div>
             ) : sessions.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
+              <div className="text-center py-8" style={{ color: "var(--text-muted)" }}>
                 No chat history yet
               </div>
             ) : (
@@ -164,14 +181,28 @@ export function SessionSidebar({
                   <li key={session.id}>
                     <button
                       onClick={() => handleSelectSession(session.id)}
-                      className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
-                        currentSessionId === session.id
-                          ? "bg-blue-100 text-blue-800"
-                          : "hover:bg-gray-100 text-gray-700"
-                      }`}
+                      className="w-full text-left px-3 py-2 rounded-lg transition-colors"
+                      style={{
+                        backgroundColor:
+                          currentSessionId === session.id
+                            ? "var(--accent)"
+                            : "transparent",
+                        color:
+                          currentSessionId === session.id
+                            ? "white"
+                            : "var(--text-primary)",
+                      }}
                     >
                       <div className="font-medium truncate">{session.title}</div>
-                      <div className="text-xs text-gray-500">
+                      <div
+                        className="text-xs"
+                        style={{
+                          color:
+                            currentSessionId === session.id
+                              ? "rgba(255,255,255,0.7)"
+                              : "var(--text-muted)",
+                        }}
+                      >
                         {formatDate(session.lastMessageAt)}
                       </div>
                     </button>
