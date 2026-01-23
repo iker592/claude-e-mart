@@ -3,9 +3,8 @@
 Basic Claude Agent SDK example.
 
 Usage:
-    pip install claude-agent-sdk
     export ANTHROPIC_API_KEY=your-api-key
-    python basic_agent.py "Your prompt here"
+    uv run --with claude-agent-sdk basic_agent.py "Your prompt here"
 """
 
 import asyncio
