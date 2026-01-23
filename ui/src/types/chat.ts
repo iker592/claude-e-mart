@@ -1,3 +1,10 @@
+export interface Session {
+  id: string;
+  title: string;
+  createdAt: Date;
+  lastMessageAt: Date;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -28,7 +35,7 @@ export interface Message {
 }
 
 export interface ChatEvent {
-  type: "text" | "text_delta" | "tool_use" | "tool_result" | "result" | "error";
+  type: "text" | "text_delta" | "tool_use" | "tool_result" | "result" | "error" | "session_init";
   content?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
@@ -38,4 +45,5 @@ export interface ChatEvent {
   cost?: number;
   duration_ms?: number;
   num_turns?: number;
+  session_id?: string;
 }

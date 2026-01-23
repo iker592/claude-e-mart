@@ -3,9 +3,14 @@ import type { Message, ChatEvent, ToolCall, ContentBlock } from "../types/chat";
 
 const API_URL = "http://localhost:8000";
 
-export function useChat() {
+interface UseChatOptions {
+  initialSessionId?: string;
+}
+
+export function useChat(options: UseChatOptions = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(options.initialSessionId || null);
 
   const sendMessage = useCallback(async (content: string) => {
     const userMessage: Message = {
@@ -28,7 +33,10 @@ export function useChat() {
       const response = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({
+          message: content,
+          ...(sessionId && { session_id: sessionId })
+        }),
       });
 
       if (!response.ok) {
@@ -56,6 +64,12 @@ export function useChat() {
 
             try {
               const event: ChatEvent = JSON.parse(data);
+
+              // Handle session initialization
+              if (event.type === "session_init" && event.session_id) {
+                setSessionId(event.session_id);
+                continue;
+              }
 
               // Handle both full text and text deltas (token streaming)
               if ((event.type === "text" || event.type === "text_delta") && event.content) {
@@ -181,7 +195,52 @@ export function useChat() {
     } finally {
       setIsLoading(false);
     }
+  }, [sessionId]);
+
+  const resetSession = useCallback(() => {
+    setMessages([]);
+    setSessionId(null);
   }, []);
 
-  return { messages, isLoading, sendMessage };
+  const loadSession = useCallback(async (newSessionId: string) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/sessions/${newSessionId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status}`);
+      }
+      const data = await response.json();
+
+      // Parse session messages into our Message format
+      const parsedMessages: Message[] = [];
+      for (const msg of data.messages || []) {
+        if (msg.role === "user" || msg.role === "assistant") {
+          const content = Array.isArray(msg.content)
+            ? msg.content
+                .filter((c: { type: string }) => c.type === "text")
+                .map((c: { text: string }) => c.text)
+                .join("")
+            : msg.content || "";
+
+          parsedMessages.push({
+            id: crypto.randomUUID(),
+            role: msg.role,
+            content,
+            timestamp: new Date(),
+          });
+        }
+      }
+
+      setMessages(parsedMessages);
+      setSessionId(newSessionId);
+    } catch (error) {
+      console.error("Failed to load session:", error);
+      setMessages([]);
+      setSessionId(newSessionId);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  return { messages, isLoading, sendMessage, sessionId, resetSession, loadSession };
 }
