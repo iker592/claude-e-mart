@@ -1,10 +1,10 @@
 import React from "react";
 import { Text, Box } from "ink";
 import chalk from "chalk";
-import { marked } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 
 // Render markdown tokens to styled text using chalk
-function renderTokens(tokens: marked.Token[]): string {
+function renderTokens(tokens: Token[]): string {
   let result = "";
 
   for (const token of tokens) {
@@ -65,7 +65,7 @@ function renderTokens(tokens: marked.Token[]): string {
 }
 
 // Render inline tokens (bold, italic, code, links, etc.)
-function renderInline(tokens: marked.Token[]): string {
+function renderInline(tokens: Token[]): string {
   let result = "";
 
   for (const token of tokens) {
