@@ -22,6 +22,12 @@
       "source": "./plugins/monitoring",
       "description": "Alert handling and observability tools",
       "version": "1.0.0"
+    },
+    {
+      "name": "apple-notes",
+      "source": "./plugins/apple-notes",
+      "description": "Read, create, and manage Apple Notes on macOS",
+      "version": "1.0.0"
     }
   ]
 }

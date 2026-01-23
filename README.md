@@ -56,6 +56,25 @@ Alert handling and observability tools.
 
 ---
 
+### apple-notes
+Read, create, and manage Apple Notes on macOS via AppleScript.
+
+**Skills:**
+- `apple-notes` - Interact with macOS Notes app
+
+**Features:**
+- List notes and folders
+- Read, create, and delete notes
+- Convert markdown ↔ Apple Notes
+- Sync notes to MemoryBench
+
+**Scripts:**
+- `md_to_note.py` - Convert markdown file to Apple Note
+- `note_to_md.py` - Export Apple Note to markdown
+- `sync_to_memorybench.py` - Sync folders to MemoryBench
+
+---
+
 ## Structure
 
 ```
@@ -65,7 +84,8 @@ claude-e-mart/
 ├── plugins/
 │   ├── code-tools/
 │   ├── deployment/
-│   └── monitoring/
+│   ├── monitoring/
+│   └── apple-notes/
 └── README.md
 ```
 
