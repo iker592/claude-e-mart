@@ -1,0 +1,10 @@
+{
+  "name": "code-tools",
+  "version": "1.0.0",
+  "description": "Code review, commit automation, and formatting tools",
+  "author": {
+    "name": "iker592"
+  },
+  "license": "MIT",
+  "keywords": ["code-review", "commit", "formatting"]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "claude-e-mart",
+  "owner": {
+    "name": "iker592",
+    "email": "iker@example.com"
+  },
+  "plugins": [
+    {
+      "name": "code-tools",
+      "source": "./plugins/code-tools",
+      "description": "Code review, commit automation, and formatting tools",
+      "version": "1.0.0"
+    },
+    {
+      "name": "deployment",
+      "source": "./plugins/deployment",
+      "description": "Deploy, rollback, and verification tools",
+      "version": "1.0.0"
+    },
+    {
+      "name": "monitoring",
+      "source": "./plugins/monitoring",
+      "description": "Alert handling and observability tools",
+      "version": "1.0.0"
+    }
+  ]
+}
