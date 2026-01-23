@@ -1,7 +1,9 @@
 import { useState, useCallback } from "react";
 import type { Message, ChatEvent, ToolCall, ContentBlock } from "../types/chat";
 
-const API_URL = "http://localhost:8000";
+// Use environment variable or default to same-origin (for CloudFront deployment)
+// In production, CloudFront proxies /api/* to the API Gateway
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 interface UseChatOptions {
   initialSessionId?: string;

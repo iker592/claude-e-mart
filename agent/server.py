@@ -1,14 +1,19 @@
 """
 FastAPI server wrapping the Claude Agent SDK with token-level streaming.
 
+Supports multiple LLM providers:
+- Direct Anthropic API (default)
+- AWS Bedrock (set CLAUDE_CODE_USE_BEDROCK=1)
+- Google Vertex AI (set CLAUDE_CODE_USE_VERTEX=1)
+
 Usage:
     uv run uvicorn server:app --reload --port 8000
 """
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +30,8 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
     ToolResultBlock,
 )
+from session_storage import get_session_storage, SessionInfo as StorageSessionInfo
+from config import load_config, get_provider_info, LLMProvider
 
 # OpenTelemetry imports - optional, gracefully handle if not available
 try:
@@ -89,6 +96,15 @@ def setup_tracing():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for setup and cleanup."""
+    # Validate LLM provider configuration on startup
+    try:
+        config = load_config()
+        provider_info = get_provider_info()
+        logger.info(f"LLM Provider configured: {provider_info}")
+    except ValueError as e:
+        logger.error(f"Configuration error: {e}")
+        raise
+
     # Setup tracing on startup
     provider = setup_tracing()
 
@@ -112,9 +128,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Claude E-Mart Agent API", lifespan=lifespan)
 
+# Configure CORS origins from environment variable
+# CORS_ORIGINS can be a comma-separated list of allowed origins
+# Default to localhost for development
+cors_origins_str = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
+cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+
+# In production, also allow CloudFront distributions
+if os.environ.get("ENV_NAME") in ("prod", "staging"):
+    cors_origins.append("https://*.cloudfront.net")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -134,31 +160,6 @@ class SessionInfo(BaseModel):
     file_path: str
 
 
-def extract_session_title(file_path: Path, max_length: int = 50) -> Optional[str]:
-    """Extract title from first user message in session file."""
-    try:
-        with open(file_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    if entry.get('type') == 'user' and 'message' in entry:
-                        content = entry['message'].get('content', '')
-                        if isinstance(content, str) and content:
-                            # Truncate and clean up
-                            title = content.strip().replace('\n', ' ')
-                            if len(title) > max_length:
-                                title = title[:max_length] + "..."
-                            return title
-                except json.JSONDecodeError:
-                    continue
-    except Exception:
-        pass
-    return None
-
-
 class SessionDetail(BaseModel):
     session_id: str
     messages: List[dict]
@@ -166,8 +167,8 @@ class SessionDetail(BaseModel):
     modified_at: Optional[str] = None
 
 
-# Path to Claude sessions directory
-CLAUDE_SESSIONS_DIR = Path.home() / ".claude" / "projects"
+# Session storage (S3 or local filesystem based on environment)
+session_storage = get_session_storage()
 
 
 async def generate_events(message: str, session_id: Optional[str] = None):
@@ -310,85 +311,50 @@ async def chat(request: ChatRequest):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint with provider and configuration information."""
     tracing_status = "enabled" if (OTEL_AVAILABLE and tracer) else "disabled"
-    return {"status": "ok", "tracing": tracing_status}
+    provider_info = get_provider_info()
+
+    return {
+        "status": "ok",
+        "tracing": tracing_status,
+        "llm_provider": provider_info,
+    }
 
 
 @app.get("/api/sessions", response_model=List[SessionInfo])
 async def list_sessions():
-    """List available sessions from ~/.claude/projects/ directory."""
-    sessions = []
+    """List available sessions from storage (S3 or local filesystem)."""
+    storage_sessions = await session_storage.list_sessions()
 
-    if not CLAUDE_SESSIONS_DIR.exists():
-        return sessions
-
-    # Search for session JSONL files recursively (Claude stores sessions as .jsonl)
-    for session_file in CLAUDE_SESSIONS_DIR.rglob("*.jsonl"):
-        try:
-            stat = session_file.stat()
-            session_id = session_file.stem
-
-            # Extract title from first user message
-            title = extract_session_title(session_file)
-
-            sessions.append(SessionInfo(
-                session_id=session_id,
-                title=title or session_id[:8] + "...",
-                created_at=str(stat.st_ctime),
-                modified_at=str(stat.st_mtime),
-                file_path=str(session_file)
-            ))
-        except Exception:
-            # Skip files we can't read
-            continue
-
-    # Sort by modification time (most recent first)
-    sessions.sort(key=lambda s: float(s.modified_at or 0), reverse=True)
-
-    return sessions
+    return [
+        SessionInfo(
+            session_id=s.session_id,
+            title=s.title,
+            created_at=s.created_at,
+            modified_at=s.modified_at,
+            file_path=s.storage_path or "",
+        )
+        for s in storage_sessions
+    ]
 
 
 @app.get("/api/sessions/{session_id}", response_model=SessionDetail)
 async def get_session(session_id: str):
     """Get session details and messages by session_id."""
-    if not CLAUDE_SESSIONS_DIR.exists():
-        raise HTTPException(status_code=404, detail="Sessions directory not found")
-
-    # Search for the session file (.jsonl format)
-    session_file = None
-    for file in CLAUDE_SESSIONS_DIR.rglob(f"{session_id}.jsonl"):
-        session_file = file
-        break
-
-    if not session_file or not session_file.exists():
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-
     try:
-        # Parse JSONL file (one JSON object per line)
-        # Format: {"type": "user"|"assistant", "message": {"role": "...", "content": "..."}}
-        messages = []
-        with open(session_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entry = json.loads(line)
-                        # Handle nested message format from Claude SDK
-                        if entry.get('type') in ('user', 'assistant') and 'message' in entry:
-                            messages.append(entry['message'])
-                    except json.JSONDecodeError:
-                        continue
+        session_data = await session_storage.get_session(session_id)
 
-        stat = session_file.stat()
+        if not session_data:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
         return SessionDetail(
-            session_id=session_id,
-            messages=messages,
-            created_at=str(stat.st_ctime),
-            modified_at=str(stat.st_mtime)
+            session_id=session_data.session_id,
+            messages=session_data.messages,
+            created_at=session_data.created_at,
+            modified_at=session_data.modified_at,
         )
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Failed to parse session file")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
