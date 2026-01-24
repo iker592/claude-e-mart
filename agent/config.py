@@ -37,7 +37,7 @@ class BedrockConfig:
     profile_name: Optional[str] = None
 
     # Default Claude model IDs available on Bedrock
-    DEFAULT_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    DEFAULT_MODEL_ID = "us.anthropic.claude-opus-4-20250514-v1:0"
 
     # Supported regions for Claude on Bedrock
     SUPPORTED_REGIONS = [

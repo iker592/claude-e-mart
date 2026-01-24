@@ -33,6 +33,12 @@ from claude_agent_sdk.types import (
 from session_storage import get_session_storage, SessionInfo as StorageSessionInfo
 from config import load_config, get_provider_info, LLMProvider
 
+# Configure logging to output INFO level to stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 # OpenTelemetry imports - optional, gracefully handle if not available
 try:
     from opentelemetry import trace
@@ -181,17 +187,36 @@ async def generate_events(message: str, session_id: Optional[str] = None):
         chat_span.set_attribute("session_id", session_id or "anonymous")
         chat_span.set_attribute("message_length", len(message))
 
+    # Create a custom stderr writer that logs output
+    class LoggingStderr:
+        """File-like object that logs writes to the Python logger."""
+        def write(self, s):
+            if s and s.strip():
+                logger.info(f"[CLI stderr] {s.rstrip()}")
+            return len(s) if s else 0
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    stderr_logger = LoggingStderr()
+
     options = ClaudeAgentOptions(
-        allowed_tools=["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
+        allowed_tools=[],  # No tools for now - just test basic chat
         permission_mode="acceptEdits",
         include_partial_messages=True,  # Enable token streaming
         resume=session_id if session_id else None,  # Resume if provided
+        debug_stderr=stderr_logger,  # Capture CLI debug output
+        model="us.anthropic.claude-opus-4-20250514-v1:0",  # Use inference profile
     )
 
     current_session_id = None
     session_sent = False
 
     try:
+        logger.info(f"Starting Claude SDK client with options: {options}")
         async with ClaudeSDKClient(options=options) as client:
             # Start span for SDK message processing
             sdk_span = None
@@ -199,9 +224,14 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                 sdk_span = tracer.start_span("sdk_message_processing")
 
             try:
+                logger.info(f"Sending query: {message[:100]}")
                 await client.query(message)
+                logger.info("Query sent, waiting for messages...")
 
+                msg_count = 0
                 async for msg in client.receive_messages():
+                    msg_count += 1
+                    logger.info(f"Received message #{msg_count}: {type(msg).__name__} - {str(msg)[:200]}")
                     # Capture session_id from init message
                     if isinstance(msg, SystemMessage):
                         if hasattr(msg, 'subtype') and msg.subtype == 'init':
@@ -288,12 +318,14 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                             "num_turns": msg.num_turns,
                         })}
                         break
+                logger.info(f"Message loop ended after {msg_count} messages")
             finally:
                 if sdk_span:
                     sdk_span.end()
 
     except Exception as e:
         # Record error in span
+        logger.error(f"Exception in generate_events: {type(e).__name__}: {e}", exc_info=True)
         if OTEL_AVAILABLE and chat_span:
             chat_span.set_status(Status(StatusCode.ERROR, str(e)))
             chat_span.record_exception(e)
@@ -320,6 +352,32 @@ async def health():
         "tracing": tracing_status,
         "llm_provider": provider_info,
     }
+
+
+@app.get("/test-bedrock")
+async def test_bedrock():
+    """Test direct Bedrock API call to verify credentials."""
+    import boto3
+    import json as json_module
+
+    try:
+        client = boto3.client("bedrock-runtime", region_name="us-east-1")
+        response = client.invoke_model(
+            modelId="us.anthropic.claude-opus-4-20250514-v1:0",
+            body=json_module.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Say hi in 5 words"}]
+            }),
+            contentType="application/json",
+        )
+        result = json_module.loads(response["body"].read())
+        return {
+            "status": "ok",
+            "response": result.get("content", [{}])[0].get("text", ""),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "type": type(e).__name__}
 
 
 @app.get("/api/sessions", response_model=List[SessionInfo])

@@ -23,12 +23,12 @@ const storageStack = new StorageStack(app, 'ClaudeEMartStorageStack', {
   description: 'Claude E-Mart Storage Stack - S3 bucket for session storage',
 });
 
-// API Stack - Lambda + API Gateway for FastAPI backend
+// API Stack - Fargate with ALB for SSE streaming support
 const apiStack = new ApiStack(app, 'ClaudeEMartApiStack', {
   env,
   envName,
   sessionBucket: storageStack.sessionBucket,
-  description: 'Claude E-Mart API Stack - Lambda function with API Gateway',
+  description: 'Claude E-Mart API Stack - Fargate with ALB',
 });
 apiStack.addDependency(storageStack);
 

@@ -1,7 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
-import * as apigatewayv2Integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
+import * as ecr_assets from 'aws-cdk-lib/aws-ecr-assets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -15,45 +16,28 @@ export interface ApiStackProps extends cdk.StackProps {
 
 export class ApiStack extends cdk.Stack {
   public readonly apiUrl: string;
-  public readonly lambdaFunction: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
     const { envName, sessionBucket } = props;
 
-    // Lambda execution role with least privilege
-    const lambdaRole = new iam.Role(this, 'LambdaExecutionRole', {
-      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      description: 'Execution role for Claude E-Mart API Lambda',
+    // VPC for Fargate
+    const vpc = new ec2.Vpc(this, 'ApiVpc', {
+      maxAzs: 2,
+      natGateways: envName === 'prod' ? 2 : 1,
     });
 
-    // Basic Lambda execution permissions
-    lambdaRole.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole')
-    );
+    // ECS Cluster
+    const cluster = new ecs.Cluster(this, 'ApiCluster', {
+      vpc,
+      clusterName: `claude-e-mart-${envName}`,
+      containerInsights: envName === 'prod',
+    });
 
-    // Bedrock permissions for Claude model invocation
-    // Required for using Claude Agent SDK with Bedrock provider
-    lambdaRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'BedrockInvokeModel',
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'bedrock:InvokeModel',
-        'bedrock:InvokeModelWithResponseStream',
-      ],
-      resources: [
-        // Allow all Claude models on Bedrock
-        'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
-      ],
-    }));
-
-    // S3 permissions for session storage
-    sessionBucket.grantReadWrite(lambdaRole);
-
-    // CloudWatch Logs for the Lambda function
-    const logGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
-      logGroupName: `/aws/lambda/claude-e-mart-api-${envName}`,
+    // CloudWatch Logs for the Fargate service
+    const logGroup = new logs.LogGroup(this, 'ServiceLogGroup', {
+      logGroupName: `/ecs/claude-e-mart-api-${envName}`,
       retention: envName === 'prod'
         ? logs.RetentionDays.THREE_MONTHS
         : logs.RetentionDays.ONE_WEEK,
@@ -62,179 +46,94 @@ export class ApiStack extends cdk.Stack {
         : cdk.RemovalPolicy.DESTROY,
     });
 
-    // Lambda function with Lambda Web Adapter for FastAPI
-    // Uses Docker bundling for cross-platform compatibility
-    this.lambdaFunction = new lambda.Function(this, 'ApiFunction', {
-      functionName: `claude-e-mart-api-${envName}`,
-      runtime: lambda.Runtime.PYTHON_3_12, // 3.12 is the latest stable with good Lambda support
-      handler: 'run.sh', // Lambda Web Adapter uses this
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../agent'), {
-        bundling: {
-          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
-          command: [
-            'bash', '-c', [
-              // Install dependencies
-              'pip install -r requirements.txt -t /asset-output --no-cache-dir',
-              // Copy Python source files
-              'cp -r *.py /asset-output/',
-              // Copy run.sh for Lambda Web Adapter
-              'cp run.sh /asset-output/ 2>/dev/null || echo "#!/bin/bash\\nexec uvicorn server:app --host 0.0.0.0 --port \\${PORT:-8000}" > /asset-output/run.sh',
-              // Make run.sh executable
-              'chmod +x /asset-output/run.sh',
-            ].join(' && '),
-          ],
-          // Use local bundling if available (faster)
-          local: {
-            tryBundle(outputDir: string): boolean {
-              try {
-                const { execSync } = require('child_process');
-                const agentDir = path.join(__dirname, '../../agent');
+    // Build the Docker image
+    const dockerImage = new ecr_assets.DockerImageAsset(this, 'ApiImage', {
+      directory: path.join(__dirname, '../../agent'),
+      platform: ecr_assets.Platform.LINUX_ARM64,
+      // Use Fargate-compatible Dockerfile
+      file: 'Dockerfile.fargate',
+    });
 
-                // Check if pip is available
-                execSync('pip3 --version', { stdio: 'ignore' });
-
-                // Install requirements
-                execSync(`pip3 install -r ${agentDir}/requirements.txt -t ${outputDir} --no-cache-dir`, {
-                  stdio: 'inherit',
-                });
-
-                // Copy source files
-                const fs = require('fs');
-                const files = fs.readdirSync(agentDir);
-                for (const file of files) {
-                  if (file.endsWith('.py') || file === 'run.sh') {
-                    fs.copyFileSync(
-                      path.join(agentDir, file),
-                      path.join(outputDir, file)
-                    );
-                  }
-                }
-
-                // Ensure run.sh exists and is executable
-                const runShPath = path.join(outputDir, 'run.sh');
-                if (!fs.existsSync(runShPath)) {
-                  fs.writeFileSync(runShPath, '#!/bin/bash\nexec uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}\n');
-                }
-                fs.chmodSync(runShPath, 0o755);
-
-                return true;
-              } catch {
-                // Fall back to Docker bundling
-                return false;
-              }
-            },
-          },
+    // Create the Fargate service with ALB
+    const fargateService = new ecsPatterns.ApplicationLoadBalancedFargateService(this, 'ApiService', {
+      cluster,
+      serviceName: `claude-e-mart-api-${envName}`,
+      cpu: 2048,
+      memoryLimitMiB: 4096,
+      desiredCount: envName === 'prod' ? 2 : 1,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+      taskImageOptions: {
+        image: ecs.ContainerImage.fromDockerImageAsset(dockerImage),
+        containerPort: 8000,
+        environment: {
+          ENV_NAME: envName,
+          SESSION_BUCKET_NAME: sessionBucket.bucketName,
+          LOG_LEVEL: envName === 'prod' ? 'INFO' : 'DEBUG',
+          CLAUDE_CODE_USE_BEDROCK: '1',
+          OTEL_SDK_DISABLED: 'true',
+          CORS_ORIGINS: envName === 'prod'
+            ? 'https://*.cloudfront.net'
+            : 'http://localhost:5173,http://localhost:3000,https://*.cloudfront.net,*',
         },
-      }),
-      role: lambdaRole,
-      timeout: cdk.Duration.seconds(300), // 5 minutes for long-running agent tasks
-      memorySize: 1024,
-      architecture: lambda.Architecture.ARM_64,
-
-      environment: {
-        // Lambda Web Adapter configuration
-        AWS_LAMBDA_EXEC_WRAPPER: '/opt/bootstrap',
-        AWS_LWA_INVOKE_MODE: 'response_stream', // Enable streaming for SSE
-        PORT: '8000',
-
-        // Application configuration
-        ENV_NAME: envName,
-        SESSION_BUCKET_NAME: sessionBucket.bucketName,
-        LOG_LEVEL: envName === 'prod' ? 'INFO' : 'DEBUG',
-
-        // Claude Agent SDK - Use Bedrock as the LLM provider
-        // This eliminates the need for ANTHROPIC_API_KEY
-        CLAUDE_CODE_USE_BEDROCK: '1',
-        // AWS_REGION is automatically set by Lambda runtime
-
-        // Disable OpenTelemetry in Lambda (can use X-Ray instead)
-        OTEL_SDK_DISABLED: 'true',
-
-        // CORS origins - will be updated after CloudFront is created
-        CORS_ORIGINS: envName === 'prod'
-          ? 'https://*.cloudfront.net'
-          : 'http://localhost:5173,http://localhost:3000',
+        logDriver: ecs.LogDrivers.awsLogs({
+          logGroup,
+          streamPrefix: 'api',
+        }),
       },
+      publicLoadBalancer: true,
+      // Enable idle timeout for long SSE connections
+      idleTimeout: cdk.Duration.minutes(5),
+    });
 
-      // Add Lambda Web Adapter layer
-      layers: [
-        lambda.LayerVersion.fromLayerVersionArn(
-          this,
-          'LambdaWebAdapter',
-          `arn:aws:lambda:${this.region}:753240598075:layer:LambdaAdapterLayerArm64:24`
-        ),
+    // Configure health check
+    fargateService.targetGroup.configureHealthCheck({
+      path: '/health',
+      interval: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(5),
+      healthyThresholdCount: 2,
+      unhealthyThresholdCount: 3,
+    });
+
+    // Grant Bedrock permissions to the task role
+    fargateService.taskDefinition.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      sid: 'BedrockInvokeModel',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock:InvokeModel',
+        'bedrock:InvokeModelWithResponseStream',
       ],
+      resources: [
+        // Foundation models (direct invocation)
+        'arn:aws:bedrock:*::foundation-model/anthropic.claude-*',
+        // Inference profiles (required for newer models)
+        'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-*',
+        'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-*',
+      ],
+    }));
 
-      logGroup,
-    });
+    // Grant S3 permissions for session storage
+    sessionBucket.grantReadWrite(fargateService.taskDefinition.taskRole);
 
-    // HTTP API Gateway with CORS
-    const httpApi = new apigatewayv2.HttpApi(this, 'HttpApi', {
-      apiName: `claude-e-mart-api-${envName}`,
-      description: 'HTTP API for Claude E-Mart agent',
-
-      corsPreflight: {
-        allowOrigins: envName === 'prod'
-          ? ['https://*.cloudfront.net']
-          : ['*'],
-        allowMethods: [
-          apigatewayv2.CorsHttpMethod.GET,
-          apigatewayv2.CorsHttpMethod.POST,
-          apigatewayv2.CorsHttpMethod.PUT,
-          apigatewayv2.CorsHttpMethod.DELETE,
-          apigatewayv2.CorsHttpMethod.OPTIONS,
-        ],
-        allowHeaders: [
-          'Content-Type',
-          'Authorization',
-          'X-Requested-With',
-          'Accept',
-          'Origin',
-          'Cache-Control',
-        ],
-        allowCredentials: false, // Set to false to allow wildcard origins
-        maxAge: cdk.Duration.hours(1),
-      },
-    });
-
-    // Lambda integration
-    const lambdaIntegration = new apigatewayv2Integrations.HttpLambdaIntegration(
-      'LambdaIntegration',
-      this.lambdaFunction,
-    );
-
-    // Add routes - catch-all for the FastAPI app
-    httpApi.addRoutes({
-      path: '/{proxy+}',
-      methods: [apigatewayv2.HttpMethod.ANY],
-      integration: lambdaIntegration,
-    });
-
-    // Root path
-    httpApi.addRoutes({
-      path: '/',
-      methods: [apigatewayv2.HttpMethod.ANY],
-      integration: lambdaIntegration,
-    });
-
-    this.apiUrl = httpApi.apiEndpoint;
+    this.apiUrl = `http://${fargateService.loadBalancer.loadBalancerDnsName}`;
 
     // Outputs
-    new cdk.CfnOutput(this, 'ApiEndpoint', {
+    new cdk.CfnOutput(this, 'ApiUrl', {
       value: this.apiUrl,
-      description: 'API Gateway endpoint URL',
+      description: 'ALB endpoint URL for the API',
       exportName: `${envName}-claude-e-mart-api-url`,
     });
 
-    new cdk.CfnOutput(this, 'LambdaFunctionArn', {
-      value: this.lambdaFunction.functionArn,
-      description: 'Lambda function ARN',
-      exportName: `${envName}-claude-e-mart-lambda-arn`,
+    new cdk.CfnOutput(this, 'ClusterArn', {
+      value: cluster.clusterArn,
+      description: 'ECS Cluster ARN',
     });
 
-    new cdk.CfnOutput(this, 'LambdaFunctionName', {
-      value: this.lambdaFunction.functionName,
-      description: 'Lambda function name',
+    new cdk.CfnOutput(this, 'ServiceArn', {
+      value: fargateService.service.serviceArn,
+      description: 'ECS Service ARN',
     });
   }
 }

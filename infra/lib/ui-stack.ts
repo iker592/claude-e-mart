@@ -41,6 +41,40 @@ export class UiStack extends cdk.Stack {
       signing: cloudfront.Signing.SIGV4_ALWAYS,
     });
 
+    // Build additional behaviors to proxy API requests through CloudFront
+    // This solves mixed content issues (HTTPS CloudFront -> HTTP ALB)
+    const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {};
+
+    // Parse the ALB URL to get the domain
+    if (apiUrl) {
+      const albDomain = apiUrl.replace(/^https?:\/\//, '');
+
+      // Create HTTP origin for the ALB
+      const apiOrigin = new cloudfrontOrigins.HttpOrigin(albDomain, {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        httpPort: 80,
+      });
+
+      // Add behavior for /api/* paths - no caching for SSE streaming
+      additionalBehaviors['/api/*'] = {
+        origin: apiOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        compress: false, // Don't compress SSE streams
+      };
+
+      // Add behavior for /health endpoint
+      additionalBehaviors['/health'] = {
+        origin: apiOrigin,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      };
+    }
+
     // CloudFront distribution
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: `Claude E-Mart UI Distribution (${envName})`,
@@ -56,33 +90,8 @@ export class UiStack extends cdk.Stack {
         compress: true,
       },
 
-      // API behavior - proxy to API Gateway
-      additionalBehaviors: {
-        '/api/*': {
-          origin: new cloudfrontOrigins.HttpOrigin(
-            // Extract hostname from API URL (remove https://)
-            apiUrl.replace('https://', '').replace('http://', ''),
-            {
-              protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-            }
-          ),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // Don't cache API responses
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        },
-        '/health': {
-          origin: new cloudfrontOrigins.HttpOrigin(
-            apiUrl.replace('https://', '').replace('http://', ''),
-            {
-              protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-            }
-          ),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        },
-      },
+      // API behavior - proxy to API Gateway (only if API URL provided)
+      additionalBehaviors,
 
       // Error pages - redirect to index.html for SPA routing
       errorResponses: [
