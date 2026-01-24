@@ -1,59 +1,35 @@
-# Production Deployment Pipeline
-# Deploys to production after merge to main using AWS CDK
-#
-# Required GitHub Secrets:
-#   AWS_ROLE_ARN: ARN of the IAM role for OIDC authentication
-#
-# See .github/AWS_OIDC_SETUP.md for setup instructions
-
 name: Production Deploy
 
 on:
   push:
     branches: [main]
 
-# Ensure only one deployment runs at a time
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "20"
-  PYTHON_VERSION: "3.13"
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: us-east-1
+  ENV_NAME: prod
 
 permissions:
-  id-token: write # Required for OIDC
+  id-token: write
   contents: read
   deployments: write
 
 jobs:
-  # ============================================
-  # Build UI
-  # ============================================
   build-ui:
     name: Build UI
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        id: cache-node-modules
-        with:
-          path: ui/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('ui/bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
-
       - name: Install dependencies
-        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         working-directory: ui
         run: bun install --frozen-lockfile
 
@@ -68,331 +44,121 @@ jobs:
       - name: Build
         working-directory: ui
         run: bun run build
-        env:
-          VITE_API_URL: ${{ vars.PRODUCTION_API_URL || 'https://api.claude-e-mart.example.com' }}
 
-      - name: Upload UI build artifacts
+      - name: Upload UI build
         uses: actions/upload-artifact@v4
         with:
           name: ui-dist
           path: ui/dist
-          retention-days: 30
 
-  # ============================================
-  # Build API
-  # ============================================
   build-api:
     name: Build API
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
 
-      - name: Cache uv dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/uv
-            agent/.venv
-          key: ${{ runner.os }}-uv-${{ hashFiles('agent/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
+      - name: Set up Python
+        run: uv python install 3.13
 
       - name: Install dependencies
         working-directory: agent
         run: uv sync --frozen
 
-      - name: Run linting
+      - name: Check imports
         working-directory: agent
-        run: |
-          if uv run ruff check . 2>/dev/null; then
-            echo "Ruff linting passed"
-          else
-            echo "Ruff not installed, skipping linting"
-          fi
-        continue-on-error: true
+        run: uv run python -c "from config import load_config; from session_storage import get_session_storage; print('Imports OK')"
 
-      - name: Run type checking
-        working-directory: agent
-        run: |
-          if uv run mypy . 2>/dev/null; then
-            echo "Mypy type checking passed"
-          else
-            echo "Mypy not installed, skipping type checking"
-          fi
-        continue-on-error: true
-
-      - name: Run tests
-        working-directory: agent
-        run: |
-          if uv run pytest 2>/dev/null; then
-            echo "Tests passed"
-          else
-            echo "No tests found or pytest not installed"
-          fi
-        continue-on-error: true
-
-      - name: Package API for deployment
-        working-directory: agent
-        run: |
-          mkdir -p ../api-package
-          cp -r *.py ../api-package/ 2>/dev/null || true
-          cp pyproject.toml ../api-package/
-          cp uv.lock ../api-package/
-
-      - name: Upload API artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-package
-          path: api-package
-          retention-days: 30
-
-  # ============================================
-  # Deploy to Staging
-  # ============================================
-  deploy-staging:
-    name: Deploy to Staging
-    needs: [build-ui, build-api]
-    runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: ${{ steps.deploy.outputs.ui_url }}
-    outputs:
-      ui_url: ${{ steps.deploy.outputs.ui_url }}
-      api_url: ${{ steps.deploy.outputs.api_url }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download UI artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-dist
-          path: ui/dist
-
-      - name: Download API artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: api-package
-          path: api-package
-
-      - name: Setup Node.js (for CDK)
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Setup Python (for CDK)
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "latest"
-
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: github-actions-staging-${{ github.sha }}
-
-      - name: Install CDK
-        run: npm install -g aws-cdk
-
-      - name: Cache CDK dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            infra/node_modules
-            ~/.cache/uv
-          key: ${{ runner.os }}-cdk-${{ hashFiles('infra/package-lock.json', 'infra/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-cdk-
-
-      - name: Install CDK dependencies
-        working-directory: infra
-        run: |
-          if [ -f package.json ]; then
-            npm ci
-          elif [ -f requirements.txt ]; then
-            uv pip install -r requirements.txt
-          fi
-        continue-on-error: true
-
-      - name: Deploy to staging
-        id: deploy
-        run: |
-          STACK_NAME="claude-e-mart-staging"
-
-          if [ -d "infra" ]; then
-            cd infra
-            cdk deploy $STACK_NAME \
-              --require-approval never \
-              --outputs-file cdk-outputs.json \
-              -c environment=staging
-
-            UI_URL=$(cat cdk-outputs.json | jq -r ".[\"$STACK_NAME\"].UIUrl // empty")
-            API_URL=$(cat cdk-outputs.json | jq -r ".[\"$STACK_NAME\"].APIUrl // empty")
-          else
-            UI_URL="https://staging.claude-e-mart.example.com"
-            API_URL="https://api-staging.claude-e-mart.example.com"
-            echo "::warning::No infra directory found. Using placeholder URLs."
-          fi
-
-          echo "ui_url=$UI_URL" >> $GITHUB_OUTPUT
-          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
-
-  # ============================================
-  # Smoke Tests on Staging
-  # ============================================
-  smoke-tests:
-    name: Smoke Tests
-    needs: [deploy-staging]
+  build-cli:
+    name: Build CLI
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Wait for deployment to stabilize
-        run: sleep 30
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
-      - name: Health check - UI
-        run: |
-          UI_URL="${{ needs.deploy-staging.outputs.ui_url }}"
-          if [ -n "$UI_URL" ] && [ "$UI_URL" != "null" ]; then
-            curl -sf "$UI_URL" > /dev/null || echo "::warning::UI health check failed"
-          else
-            echo "::warning::No UI URL available for health check"
-          fi
-        continue-on-error: true
+      - name: Install dependencies
+        working-directory: cli
+        run: bun install
 
-      - name: Health check - API
-        run: |
-          API_URL="${{ needs.deploy-staging.outputs.api_url }}"
-          if [ -n "$API_URL" ] && [ "$API_URL" != "null" ]; then
-            curl -sf "$API_URL/health" > /dev/null || echo "::warning::API health check failed"
-          else
-            echo "::warning::No API URL available for health check"
-          fi
-        continue-on-error: true
+      - name: Type check
+        working-directory: cli
+        run: bun run tsc --noEmit
 
-  # ============================================
-  # Deploy to Production
-  # ============================================
-  deploy-production:
-    name: Deploy to Production
-    needs: [deploy-staging, smoke-tests]
+  deploy-prod:
+    name: Deploy Production
+    needs: [build-ui, build-api, build-cli]
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: ${{ steps.deploy.outputs.ui_url }}
-    outputs:
-      ui_url: ${{ steps.deploy.outputs.ui_url }}
-      api_url: ${{ steps.deploy.outputs.api_url }}
+      url: ${{ steps.urls.outputs.ui_url }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download UI artifacts
+      - name: Download UI build
         uses: actions/download-artifact@v4
         with:
           name: ui-dist
           path: ui/dist
 
-      - name: Download API artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: api-package
-          path: api-package
-
-      - name: Setup Node.js (for CDK)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "20"
 
-      - name: Setup Python (for CDK)
-        uses: actions/setup-python@v5
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          bun-version: latest
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
 
-      - name: Configure AWS credentials via OIDC
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: github-actions-production-${{ github.sha }}
 
       - name: Install CDK
         run: npm install -g aws-cdk
 
-      - name: Cache CDK dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            infra/node_modules
-            ~/.cache/uv
-          key: ${{ runner.os }}-cdk-${{ hashFiles('infra/package-lock.json', 'infra/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-cdk-
-
-      - name: Install CDK dependencies
+      - name: Install infra dependencies
         working-directory: infra
-        run: |
-          if [ -f package.json ]; then
-            npm ci
-          elif [ -f requirements.txt ]; then
-            uv pip install -r requirements.txt
-          fi
-        continue-on-error: true
+        run: bun install
 
       - name: Deploy to production
-        id: deploy
+        working-directory: infra
+        run: cdk deploy --all --require-approval never --outputs-file cdk-outputs.json -c envName=${{ env.ENV_NAME }}
+
+      - name: Get deployment URLs
+        id: urls
+        working-directory: infra
         run: |
-          STACK_NAME="claude-e-mart-production"
-
-          if [ -d "infra" ]; then
-            cd infra
-            cdk deploy $STACK_NAME \
-              --require-approval never \
-              --outputs-file cdk-outputs.json \
-              -c environment=production
-
-            UI_URL=$(cat cdk-outputs.json | jq -r ".[\"$STACK_NAME\"].UIUrl // empty")
-            API_URL=$(cat cdk-outputs.json | jq -r ".[\"$STACK_NAME\"].APIUrl // empty")
-          else
-            UI_URL="https://claude-e-mart.example.com"
-            API_URL="https://api.claude-e-mart.example.com"
-            echo "::warning::No infra directory found. Using placeholder URLs."
-          fi
-
+          UI_URL=$(cat cdk-outputs.json | jq -r '.ClaudeEMartUiStack.DistributionUrl // empty')
+          API_URL=$(cat cdk-outputs.json | jq -r '.ClaudeEMartApiStack.ApiUrl // empty')
           echo "ui_url=$UI_URL" >> $GITHUB_OUTPUT
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
 
-      - name: Create deployment summary
+      - name: Deployment summary
         run: |
-          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Production Deployed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Component | URL |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| UI | ${{ steps.deploy.outputs.ui_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| API | ${{ steps.deploy.outputs.api_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| UI | ${{ steps.urls.outputs.ui_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ steps.urls.outputs.api_url }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployed at:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
