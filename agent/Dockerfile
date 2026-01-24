@@ -29,9 +29,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv pip install --system --no-cache -r pyproject.toml && \
     uv pip install --system --no-cache boto3
 
-# Cache bust to force rebuild when code changes
-ARG CACHEBUST=1
-
 # Copy application code
 COPY *.py ./
 
@@ -46,4 +43,3 @@ EXPOSE 8000
 
 # Run uvicorn server
 CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
-# Build: 1769273456

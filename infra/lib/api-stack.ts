@@ -49,9 +49,7 @@ export class ApiStack extends cdk.Stack {
     // Build the Docker image
     const dockerImage = new ecr_assets.DockerImageAsset(this, 'ApiImage', {
       directory: path.join(__dirname, '../../agent'),
-      platform: ecr_assets.Platform.LINUX_ARM64,
-      // Use Fargate-compatible Dockerfile
-      file: 'Dockerfile.fargate',
+      platform: ecr_assets.Platform.LINUX_AMD64,
     });
 
     // Create the Fargate service with ALB
@@ -62,7 +60,7 @@ export class ApiStack extends cdk.Stack {
       memoryLimitMiB: 4096,
       desiredCount: envName === 'prod' ? 2 : 1,
       runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
       },
       taskImageOptions: {
