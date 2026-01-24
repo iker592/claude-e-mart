@@ -16,28 +16,31 @@ const env = {
 // Environment name for resource naming
 const envName = app.node.tryGetContext('envName') || process.env.ENV_NAME || 'dev';
 
+// Stack name suffix based on environment
+const stackSuffix = envName === 'dev' ? '' : `-${envName}`;
+
 // Storage Stack - S3 bucket for session storage
-const storageStack = new StorageStack(app, 'ClaudeEMartStorageStack', {
+const storageStack = new StorageStack(app, `ClaudeEMartStorageStack${stackSuffix}`, {
   env,
   envName,
-  description: 'Claude E-Mart Storage Stack - S3 bucket for session storage',
+  description: `Claude E-Mart Storage Stack (${envName})`,
 });
 
 // API Stack - Fargate with ALB for SSE streaming support
-const apiStack = new ApiStack(app, 'ClaudeEMartApiStack', {
+const apiStack = new ApiStack(app, `ClaudeEMartApiStack${stackSuffix}`, {
   env,
   envName,
   sessionBucket: storageStack.sessionBucket,
-  description: 'Claude E-Mart API Stack - Fargate with ALB',
+  description: `Claude E-Mart API Stack (${envName})`,
 });
 apiStack.addDependency(storageStack);
 
 // UI Stack - S3 + CloudFront for React frontend
-const uiStack = new UiStack(app, 'ClaudeEMartUiStack', {
+const uiStack = new UiStack(app, `ClaudeEMartUiStack${stackSuffix}`, {
   env,
   envName,
   apiUrl: apiStack.apiUrl,
-  description: 'Claude E-Mart UI Stack - S3 bucket with CloudFront distribution',
+  description: `Claude E-Mart UI Stack (${envName})`,
 });
 uiStack.addDependency(apiStack);
 

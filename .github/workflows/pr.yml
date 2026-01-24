@@ -144,8 +144,8 @@ jobs:
         id: urls
         working-directory: infra
         run: |
-          UI_URL=$(cat cdk-outputs.json | jq -r '.ClaudeEMartUiStack.DistributionUrl // empty')
-          API_URL=$(cat cdk-outputs.json | jq -r '.ClaudeEMartApiStack.ApiUrl // empty')
+          UI_URL=$(cat cdk-outputs.json | jq -r '."ClaudeEMartUiStack-${{ env.ENV_NAME }}".DistributionUrl // empty')
+          API_URL=$(cat cdk-outputs.json | jq -r '."ClaudeEMartApiStack-${{ env.ENV_NAME }}".ApiUrl // empty')
           echo "ui_url=$UI_URL" >> $GITHUB_OUTPUT
           echo "api_url=$API_URL" >> $GITHUB_OUTPUT
 

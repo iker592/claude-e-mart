@@ -1,0 +1,21 @@
+{
+  "ClaudeEMartStorageStack": {
+    "ExportsOutputRefSessionBucket9C3E193844FBB2CC": "claude-e-mart-sessions-dev-239388734812",
+    "ExportsOutputFnGetAttSessionBucket9C3E1938Arn6F841266": "arn:aws:s3:::claude-e-mart-sessions-dev-239388734812",
+    "SessionBucketName": "claude-e-mart-sessions-dev-239388734812",
+    "SessionBucketArn": "arn:aws:s3:::claude-e-mart-sessions-dev-239388734812"
+  },
+  "ClaudeEMartApiStack": {
+    "ClusterArn": "arn:aws:ecs:us-east-1:239388734812:cluster/claude-e-mart-dev",
+    "ApiServiceServiceURL2EB28DB2": "http://Claude-ApiSe-5b5cdvUkw53u-2146541939.us-east-1.elb.amazonaws.com",
+    "ApiUrl": "http://Claude-ApiSe-5b5cdvUkw53u-2146541939.us-east-1.elb.amazonaws.com",
+    "ApiServiceLoadBalancerDNSBF9EB7FC": "Claude-ApiSe-5b5cdvUkw53u-2146541939.us-east-1.elb.amazonaws.com",
+    "ServiceArn": "arn:aws:ecs:us-east-1:239388734812:service/claude-e-mart-dev/claude-e-mart-api-dev"
+  },
+  "ClaudeEMartUiStack": {
+    "WebsiteBucketName": "claude-e-mart-ui-dev-239388734812",
+    "DistributionUrl": "https://d3jihwamg9l6eb.cloudfront.net",
+    "DistributionId": "E2VCQRLZYWFK7Z",
+    "ApiProxyUrl": "https://d3jihwamg9l6eb.cloudfront.net/api"
+  }
+}
