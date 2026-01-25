@@ -30,11 +30,12 @@ export function SessionSidebar({
   const [sessions, setSessions] = useState<Session[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Fetch sessions when sidebar opens or when a new session is created
   useEffect(() => {
     if (isOpen) {
       fetchSessions();
     }
-  }, [isOpen]);
+  }, [isOpen, currentSessionId]);
 
   const fetchSessions = async () => {
     setIsLoading(true);
