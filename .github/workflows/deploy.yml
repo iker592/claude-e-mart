@@ -141,7 +141,7 @@ jobs:
 
       - name: Deploy to production
         working-directory: infra
-        run: cdk deploy --all --require-approval never --outputs-file cdk-outputs.json -c envName=${{ env.ENV_NAME }}
+        run: make deploy ENV=${{ env.ENV_NAME }}
 
       - name: Get deployment URLs
         id: urls

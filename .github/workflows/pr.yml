@@ -138,7 +138,7 @@ jobs:
 
       - name: Deploy PR environment
         working-directory: infra
-        run: cdk deploy --all --require-approval never --outputs-file cdk-outputs.json -c envName=${{ env.ENV_NAME }}
+        run: make deploy ENV=${{ env.ENV_NAME }}
 
       - name: Get deployment URLs
         id: urls
@@ -200,7 +200,7 @@ jobs:
 
       - name: Destroy PR environment
         working-directory: infra
-        run: cdk destroy --all --force -c envName=${{ env.ENV_NAME }}
+        run: make destroy ENV=${{ env.ENV_NAME }}
 
       - name: Comment on PR
         uses: peter-evans/create-or-update-comment@v4
