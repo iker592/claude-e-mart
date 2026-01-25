@@ -20,6 +20,27 @@ interface APISession {
   file_path: string;
 }
 
+// Parse timestamp that can be either Unix seconds or ISO string
+function parseTimestamp(value: string): Date {
+  if (!value) return new Date();
+
+  // Check if it's a numeric Unix timestamp (seconds)
+  const numValue = parseFloat(value);
+  if (!isNaN(numValue) && numValue > 1000000000 && numValue < 10000000000) {
+    // Looks like Unix timestamp in seconds (between 2001 and 2286)
+    return new Date(numValue * 1000);
+  }
+
+  // Try parsing as ISO string or other date format
+  const parsed = new Date(value);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  // Fallback to current time
+  return new Date();
+}
+
 export function SessionSidebar({
   isOpen,
   onClose,
@@ -30,11 +51,12 @@ export function SessionSidebar({
   const [sessions, setSessions] = useState<Session[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Fetch sessions when sidebar opens or when a new session is created
   useEffect(() => {
     if (isOpen) {
       fetchSessions();
     }
-  }, [isOpen]);
+  }, [isOpen, currentSessionId]);
 
   const fetchSessions = async () => {
     setIsLoading(true);
@@ -48,8 +70,8 @@ export function SessionSidebar({
         data.map((s) => ({
           id: s.session_id,
           title: s.title || s.session_id.slice(0, 8) + "...",
-          createdAt: new Date(parseFloat(s.created_at) * 1000),
-          lastMessageAt: new Date(parseFloat(s.modified_at) * 1000),
+          createdAt: parseTimestamp(s.created_at),
+          lastMessageAt: parseTimestamp(s.modified_at),
         }))
       );
     } catch (error) {

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -212,6 +213,8 @@ async def generate_events(message: str, session_id: Optional[str] = None):
 
     current_session_id = None
     session_sent = False
+    collected_content = []  # Collect messages for session storage
+    assistant_text = []  # Accumulate assistant response text
 
     try:
         logger.info(f"Starting Claude SDK client with options: {options}")
@@ -223,6 +226,12 @@ async def generate_events(message: str, session_id: Optional[str] = None):
 
             try:
                 logger.info(f"Sending query: {message[:100]}")
+                # Collect user message for session storage
+                collected_content.append({
+                    "type": "user",
+                    "message": {"role": "user", "content": message},
+                    "timestamp": datetime.utcnow().isoformat()
+                })
                 await client.query(message)
                 logger.info("Query sent, waiting for messages...")
 
@@ -255,6 +264,7 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                             if delta.get("type") == "text_delta":
                                 text = delta.get("text", "")
                                 if text:
+                                    assistant_text.append(text)  # Collect for session storage
                                     yield {"data": json.dumps({"type": "text_delta", "content": text})}
                             elif delta.get("type") == "input_json_delta":
                                 # Tool input streaming (optional)
@@ -307,6 +317,34 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                             chat_span.set_attribute("result.cost_usd", msg.total_cost_usd or 0)
                             chat_span.set_attribute("result.duration_ms", msg.duration_ms or 0)
                             chat_span.set_attribute("result.num_turns", msg.num_turns or 0)
+
+                        # Collect assistant message for session storage
+                        if assistant_text:
+                            collected_content.append({
+                                "type": "assistant",
+                                "message": {"role": "assistant", "content": "".join(assistant_text)},
+                                "timestamp": datetime.utcnow().isoformat()
+                            })
+
+                        # Save session to storage
+                        if current_session_id and collected_content:
+                            try:
+                                session_content = "\n".join(
+                                    json.dumps(entry) for entry in collected_content
+                                )
+                                if session_id:
+                                    # Updating existing session
+                                    await session_storage.update_session(
+                                        current_session_id, session_content
+                                    )
+                                else:
+                                    # Creating new session
+                                    await session_storage.create_session(
+                                        current_session_id, session_content
+                                    )
+                                logger.info(f"Saved session {current_session_id} to storage")
+                            except Exception as save_err:
+                                logger.error(f"Failed to save session: {save_err}")
 
                         yield {"data": json.dumps({
                             "type": "result",
