@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "chalk": "^5.6.2",
-    "cli-markdown": "^3.5.1",
     "ink": "^5.1.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
