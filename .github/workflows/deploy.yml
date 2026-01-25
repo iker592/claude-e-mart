@@ -1,0 +1,164 @@
+name: Production Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ENV_NAME: prod
+
+permissions:
+  id-token: write
+  contents: read
+  deployments: write
+
+jobs:
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: ui
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        working-directory: ui
+        run: bun run lint
+
+      - name: Type check
+        working-directory: ui
+        run: bun run tsc -b
+
+      - name: Build
+        working-directory: ui
+        run: bun run build
+
+      - name: Upload UI build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+
+  build-api:
+    name: Build API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        working-directory: agent
+        run: uv sync --frozen
+
+      - name: Check imports
+        working-directory: agent
+        run: uv run python -c "from config import load_config; from session_storage import get_session_storage; print('Imports OK')"
+
+  build-cli:
+    name: Build CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: cli
+        run: bun install
+
+      - name: Type check
+        working-directory: cli
+        run: bun run tsc --noEmit
+
+  deploy-prod:
+    name: Deploy Production
+    needs: [build-ui, build-api, build-cli]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.urls.outputs.ui_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download UI build
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install CDK
+        run: npm install -g aws-cdk
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: bun install
+
+      - name: Deploy to production
+        working-directory: infra
+        run: make deploy ENV=${{ env.ENV_NAME }}
+
+      - name: Get deployment URLs
+        id: urls
+        working-directory: infra
+        run: |
+          UI_URL=$(cat cdk-outputs.json | jq -r '."ClaudeEMartUiStack-${{ env.ENV_NAME }}".DistributionUrl // empty')
+          API_URL=$(cat cdk-outputs.json | jq -r '."ClaudeEMartApiStack-${{ env.ENV_NAME }}".ApiUrl // empty')
+          echo "ui_url=$UI_URL" >> $GITHUB_OUTPUT
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+
+      - name: Deployment summary
+        run: |
+          echo "## 🚀 Production Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | URL |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| UI | ${{ steps.urls.outputs.ui_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ steps.urls.outputs.api_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

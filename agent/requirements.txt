@@ -1,0 +1,19 @@
+# FastAPI and server dependencies
+fastapi>=0.115.0
+uvicorn>=0.34.0
+sse-starlette>=2.2.0
+
+# Claude Agent SDK
+claude-agent-sdk>=0.1.21
+
+# AWS integrations (for S3 session storage)
+boto3>=1.35.0
+
+# Mangum for Lambda compatibility (alternative to Lambda Web Adapter)
+mangum>=0.19.0
+
+# OpenTelemetry (optional, disabled in Lambda by default)
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0

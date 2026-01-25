@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# CDK output
+cdk.out/
+
+# TypeScript build output
+dist/
+*.js
+*.d.ts
+
+# Keep the source files
+!jest.config.js
+
+# Environment files
+.env
+.env.local
+*.local
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
