@@ -21,17 +21,14 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk.types import (
-    AssistantMessage,
     ResultMessage,
     UserMessage,
     StreamEvent,
     SystemMessage,
-    TextBlock,
-    ToolUseBlock,
     ToolResultBlock,
 )
-from session_storage import get_session_storage, SessionInfo as StorageSessionInfo
-from config import load_config, get_provider_info, LLMProvider
+from session_storage import get_session_storage
+from config import load_config, get_provider_info
 
 # Configure logging to output INFO level to stdout
 logging.basicConfig(
@@ -57,6 +54,21 @@ logger = logging.getLogger(__name__)
 
 # Global tracer - will be None if tracing is disabled
 tracer = None
+
+
+class LoggingStderr:
+    """File-like object that logs writes to the Python logger."""
+
+    def write(self, s):
+        if s and s.strip():
+            logger.info(f"[CLI stderr] {s.rstrip()}")
+        return len(s) if s else 0
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
 
 
 def setup_tracing():
@@ -104,7 +116,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler for setup and cleanup."""
     # Validate LLM provider configuration on startup
     try:
-        config = load_config()
+        load_config()  # Validates configuration, raises ValueError if invalid
         provider_info = get_provider_info()
         logger.info(f"LLM Provider configured: {provider_info}")
     except ValueError as e:
@@ -186,20 +198,6 @@ async def generate_events(message: str, session_id: Optional[str] = None):
         chat_span = tracer.start_span("chat_request")
         chat_span.set_attribute("session_id", session_id or "anonymous")
         chat_span.set_attribute("message_length", len(message))
-
-    # Create a custom stderr writer that logs output
-    class LoggingStderr:
-        """File-like object that logs writes to the Python logger."""
-        def write(self, s):
-            if s and s.strip():
-                logger.info(f"[CLI stderr] {s.rstrip()}")
-            return len(s) if s else 0
-
-        def flush(self):
-            pass
-
-        def close(self):
-            pass
 
     stderr_logger = LoggingStderr()
 
@@ -352,32 +350,6 @@ async def health():
         "tracing": tracing_status,
         "llm_provider": provider_info,
     }
-
-
-@app.get("/test-bedrock")
-async def test_bedrock():
-    """Test direct Bedrock API call to verify credentials."""
-    import boto3
-    import json as json_module
-
-    try:
-        client = boto3.client("bedrock-runtime", region_name="us-east-1")
-        response = client.invoke_model(
-            modelId="us.anthropic.claude-opus-4-20250514-v1:0",
-            body=json_module.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 100,
-                "messages": [{"role": "user", "content": "Say hi in 5 words"}]
-            }),
-            contentType="application/json",
-        )
-        result = json_module.loads(response["body"].read())
-        return {
-            "status": "ok",
-            "response": result.get("content", [{}])[0].get("text", ""),
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e), "type": type(e).__name__}
 
 
 @app.get("/api/sessions", response_model=List[SessionInfo])

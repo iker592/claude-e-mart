@@ -141,7 +141,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [streamingText, setStreamingText] = useState("");
   const { exit } = useApp();
 
   const toolCallsRef = useRef<ToolCall[]>([]);
@@ -158,7 +157,6 @@ function App() {
     setMessages((prev) => [...prev, { role: "user", content }]);
     setIsLoading(true);
     setError(null);
-    setStreamingText("");
     toolCallsRef.current = [];
     contentBlocksRef.current = [];
 
