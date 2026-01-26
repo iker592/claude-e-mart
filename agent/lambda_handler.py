@@ -12,6 +12,7 @@ Usage:
 """
 
 from mangum import Mangum
+
 from server import app
 
 # Create the Mangum handler

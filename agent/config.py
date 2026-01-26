@@ -12,17 +12,17 @@ The provider is selected based on environment variables:
 - Neither set: uses direct Anthropic API
 """
 
-import os
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class LLMProvider(Enum):
     """Available LLM providers for the Claude Agent SDK."""
+
     ANTHROPIC = "anthropic"
     BEDROCK = "bedrock"
     VERTEX = "vertex"
@@ -31,10 +31,11 @@ class LLMProvider(Enum):
 @dataclass
 class BedrockConfig:
     """AWS Bedrock-specific configuration."""
+
     region: str
-    model_id: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    profile_name: Optional[str] = None
+    model_id: str | None = None
+    endpoint_url: str | None = None
+    profile_name: str | None = None
 
     # Default Claude model IDs available on Bedrock
     DEFAULT_MODEL_ID = "us.anthropic.claude-opus-4-20250514-v1:0"
@@ -53,6 +54,7 @@ class BedrockConfig:
 @dataclass
 class VertexConfig:
     """Google Vertex AI-specific configuration."""
+
     project_id: str
     region: str
 
@@ -60,10 +62,11 @@ class VertexConfig:
 @dataclass
 class AgentConfig:
     """Main configuration for the Claude Agent SDK."""
+
     provider: LLMProvider
-    bedrock_config: Optional[BedrockConfig] = None
-    vertex_config: Optional[VertexConfig] = None
-    anthropic_api_key: Optional[str] = None
+    bedrock_config: BedrockConfig | None = None
+    vertex_config: VertexConfig | None = None
+    anthropic_api_key: str | None = None
 
 
 def get_provider() -> LLMProvider:
@@ -215,18 +218,22 @@ def get_provider_info() -> dict:
 
     if provider == LLMProvider.BEDROCK:
         bedrock_config = get_bedrock_config()
-        info.update({
-            "aws_region": bedrock_config.region,
-            "model_id": bedrock_config.model_id or BedrockConfig.DEFAULT_MODEL_ID,
-            "credentials_source": _get_aws_credentials_source(),
-        })
+        info.update(
+            {
+                "aws_region": bedrock_config.region,
+                "model_id": bedrock_config.model_id or BedrockConfig.DEFAULT_MODEL_ID,
+                "credentials_source": _get_aws_credentials_source(),
+            }
+        )
     elif provider == LLMProvider.VERTEX:
         try:
             vertex_config = get_vertex_config()
-            info.update({
-                "project_id": vertex_config.project_id,
-                "region": vertex_config.region,
-            })
+            info.update(
+                {
+                    "project_id": vertex_config.project_id,
+                    "region": vertex_config.region,
+                }
+            )
         except ValueError as e:
             info["error"] = str(e)
     else:
