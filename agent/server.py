@@ -15,37 +15,36 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, List
+
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import (
+    ResultMessage,
+    StreamEvent,
+    SystemMessage,
+    ToolResultBlock,
+    UserMessage,
+)
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-from claude_agent_sdk.types import (
-    ResultMessage,
-    UserMessage,
-    StreamEvent,
-    SystemMessage,
-    ToolResultBlock,
-)
+
+from config import get_provider_info, load_config
 from session_storage import get_session_storage
-from config import load_config, get_provider_info
 
 # Configure logging to output INFO level to stdout
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 # OpenTelemetry imports - optional, gracefully handle if not available
 try:
     from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.trace import Status, StatusCode
+
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
@@ -81,10 +80,12 @@ def setup_tracing():
 
     try:
         # Create resource with service name
-        resource = Resource.create({
-            "service.name": "claude-e-mart-agent",
-            "service.version": "0.1.0",
-        })
+        resource = Resource.create(
+            {
+                "service.name": "claude-e-mart-agent",
+                "service.version": "0.1.0",
+            }
+        )
 
         # Create tracer provider
         provider = TracerProvider(resource=resource)
@@ -168,29 +169,29 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: Optional[str] = None
+    session_id: str | None = None
 
 
 class SessionInfo(BaseModel):
     session_id: str
-    title: Optional[str] = None
-    created_at: Optional[str] = None
-    modified_at: Optional[str] = None
+    title: str | None = None
+    created_at: str | None = None
+    modified_at: str | None = None
     file_path: str
 
 
 class SessionDetail(BaseModel):
     session_id: str
-    messages: List[dict]
-    created_at: Optional[str] = None
-    modified_at: Optional[str] = None
+    messages: list[dict]
+    created_at: str | None = None
+    modified_at: str | None = None
 
 
 # Session storage (S3 or local filesystem based on environment)
 session_storage = get_session_storage()
 
 
-async def generate_events(message: str, session_id: Optional[str] = None):
+async def generate_events(message: str, session_id: str | None = None):
     """Stream agent responses with token-level streaming using include_partial_messages."""
 
     # Start a span for the chat request
@@ -227,11 +228,13 @@ async def generate_events(message: str, session_id: Optional[str] = None):
             try:
                 logger.info(f"Sending query: {message[:100]}")
                 # Collect user message for session storage
-                collected_content.append({
-                    "type": "user",
-                    "message": {"role": "user", "content": message},
-                    "timestamp": datetime.utcnow().isoformat()
-                })
+                collected_content.append(
+                    {
+                        "type": "user",
+                        "message": {"role": "user", "content": message},
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                )
                 await client.query(message)
                 logger.info("Query sent, waiting for messages...")
 
@@ -241,18 +244,17 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                     logger.info(f"Received message #{msg_count}: {type(msg).__name__} - {str(msg)[:200]}")
                     # Capture session_id from init message
                     if isinstance(msg, SystemMessage):
-                        if hasattr(msg, 'subtype') and msg.subtype == 'init':
-                            if hasattr(msg, 'data') and msg.data:
-                                current_session_id = msg.data.get('session_id')
+                        if hasattr(msg, "subtype") and msg.subtype == "init":
+                            if hasattr(msg, "data") and msg.data:
+                                current_session_id = msg.data.get("session_id")
                                 # Update span with actual session ID
                                 if OTEL_AVAILABLE and chat_span and current_session_id:
                                     chat_span.set_attribute("actual_session_id", current_session_id)
                                 # Stream back the session_id in the first SSE event
                                 if current_session_id and not session_sent:
-                                    yield {"data": json.dumps({
-                                        "type": "session_init",
-                                        "session_id": current_session_id
-                                    })}
+                                    yield {
+                                        "data": json.dumps({"type": "session_init", "session_id": current_session_id})
+                                    }
                                     session_sent = True
                         continue
                     # Handle StreamEvent for token-level streaming
@@ -282,12 +284,16 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                                     tool_span.set_attribute("tool.id", block.get("id", ""))
                                     tool_span.end()
 
-                                yield {"data": json.dumps({
-                                    "type": "tool_use",
-                                    "tool_id": block.get("id"),
-                                    "tool_name": tool_name,
-                                    "tool_input": {},
-                                })}
+                                yield {
+                                    "data": json.dumps(
+                                        {
+                                            "type": "tool_use",
+                                            "tool_id": block.get("id"),
+                                            "tool_name": tool_name,
+                                            "tool_input": {},
+                                        }
+                                    )
+                                }
 
                     # Handle complete messages (for tool results)
                     elif isinstance(msg, UserMessage):
@@ -304,12 +310,16 @@ async def generate_events(message: str, session_id: Optional[str] = None):
                                     result_span.set_attribute("tool.is_error", block.is_error or False)
                                     result_span.end()
 
-                                yield {"data": json.dumps({
-                                    "type": "tool_result",
-                                    "tool_id": block.tool_use_id,
-                                    "content": content[:500] if content else "",
-                                    "is_error": block.is_error,
-                                })}
+                                yield {
+                                    "data": json.dumps(
+                                        {
+                                            "type": "tool_result",
+                                            "tool_id": block.tool_use_id,
+                                            "content": content[:500] if content else "",
+                                            "is_error": block.is_error,
+                                        }
+                                    )
+                                }
 
                     elif isinstance(msg, ResultMessage):
                         # Record final result metrics
@@ -320,39 +330,39 @@ async def generate_events(message: str, session_id: Optional[str] = None):
 
                         # Collect assistant message for session storage
                         if assistant_text:
-                            collected_content.append({
-                                "type": "assistant",
-                                "message": {"role": "assistant", "content": "".join(assistant_text)},
-                                "timestamp": datetime.utcnow().isoformat()
-                            })
+                            collected_content.append(
+                                {
+                                    "type": "assistant",
+                                    "message": {"role": "assistant", "content": "".join(assistant_text)},
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                }
+                            )
 
                         # Save session to storage
                         if current_session_id and collected_content:
                             try:
-                                session_content = "\n".join(
-                                    json.dumps(entry) for entry in collected_content
-                                )
+                                session_content = "\n".join(json.dumps(entry) for entry in collected_content)
                                 if session_id:
                                     # Updating existing session
-                                    await session_storage.update_session(
-                                        current_session_id, session_content
-                                    )
+                                    await session_storage.update_session(current_session_id, session_content)
                                 else:
                                     # Creating new session
-                                    await session_storage.create_session(
-                                        current_session_id, session_content
-                                    )
+                                    await session_storage.create_session(current_session_id, session_content)
                                 logger.info(f"Saved session {current_session_id} to storage")
                             except Exception as save_err:
                                 logger.error(f"Failed to save session: {save_err}")
 
-                        yield {"data": json.dumps({
-                            "type": "result",
-                            "result": msg.result,
-                            "cost": msg.total_cost_usd,
-                            "duration_ms": msg.duration_ms,
-                            "num_turns": msg.num_turns,
-                        })}
+                        yield {
+                            "data": json.dumps(
+                                {
+                                    "type": "result",
+                                    "result": msg.result,
+                                    "cost": msg.total_cost_usd,
+                                    "duration_ms": msg.duration_ms,
+                                    "num_turns": msg.num_turns,
+                                }
+                            )
+                        }
                         break
                 logger.info(f"Message loop ended after {msg_count} messages")
             finally:
@@ -390,7 +400,7 @@ async def health():
     }
 
 
-@app.get("/api/sessions", response_model=List[SessionInfo])
+@app.get("/api/sessions", response_model=list[SessionInfo])
 async def list_sessions():
     """List available sessions from storage (S3 or local filesystem)."""
     storage_sessions = await session_storage.list_sessions()

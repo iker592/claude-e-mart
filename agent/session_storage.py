@@ -16,7 +16,7 @@ import os
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +27,11 @@ class SessionData:
     def __init__(
         self,
         session_id: str,
-        messages: List[Dict[str, Any]],
-        title: Optional[str] = None,
-        created_at: Optional[str] = None,
-        modified_at: Optional[str] = None,
-        raw_content: Optional[str] = None,
+        messages: list[dict[str, Any]],
+        title: str | None = None,
+        created_at: str | None = None,
+        modified_at: str | None = None,
+        raw_content: str | None = None,
     ):
         self.session_id = session_id
         self.messages = messages
@@ -40,7 +40,7 @@ class SessionData:
         self.modified_at = modified_at
         self.raw_content = raw_content
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
             "messages": self.messages,
@@ -56,10 +56,10 @@ class SessionInfo:
     def __init__(
         self,
         session_id: str,
-        title: Optional[str] = None,
-        created_at: Optional[str] = None,
-        modified_at: Optional[str] = None,
-        storage_path: Optional[str] = None,
+        title: str | None = None,
+        created_at: str | None = None,
+        modified_at: str | None = None,
+        storage_path: str | None = None,
     ):
         self.session_id = session_id
         self.title = title
@@ -67,7 +67,7 @@ class SessionInfo:
         self.modified_at = modified_at
         self.storage_path = storage_path
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
             "title": self.title,
@@ -86,12 +86,12 @@ class SessionStorageBackend(ABC):
         pass
 
     @abstractmethod
-    async def get_session(self, session_id: str) -> Optional[SessionData]:
+    async def get_session(self, session_id: str) -> SessionData | None:
         """Retrieve a session by ID. Returns None if not found."""
         pass
 
     @abstractmethod
-    async def list_sessions(self) -> List[SessionInfo]:
+    async def list_sessions(self) -> list[SessionInfo]:
         """List all available sessions."""
         pass
 
@@ -106,19 +106,19 @@ class SessionStorageBackend(ABC):
         pass
 
     @staticmethod
-    def extract_title_from_content(content: str, max_length: int = 50) -> Optional[str]:
+    def extract_title_from_content(content: str, max_length: int = 50) -> str | None:
         """Extract title from first user message in session content."""
         try:
-            for line in content.split('\n'):
+            for line in content.split("\n"):
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     entry = json.loads(line)
-                    if entry.get('type') == 'user' and 'message' in entry:
-                        msg_content = entry['message'].get('content', '')
+                    if entry.get("type") == "user" and "message" in entry:
+                        msg_content = entry["message"].get("content", "")
                         if isinstance(msg_content, str) and msg_content:
-                            title = msg_content.strip().replace('\n', ' ')
+                            title = msg_content.strip().replace("\n", " ")
                             if len(title) > max_length:
                                 title = title[:max_length] + "..."
                             return title
@@ -129,16 +129,16 @@ class SessionStorageBackend(ABC):
         return None
 
     @staticmethod
-    def parse_messages_from_content(content: str) -> List[Dict[str, Any]]:
+    def parse_messages_from_content(content: str) -> list[dict[str, Any]]:
         """Parse messages from JSONL content."""
         messages = []
-        for line in content.split('\n'):
+        for line in content.split("\n"):
             line = line.strip()
             if line:
                 try:
                     entry = json.loads(line)
-                    if entry.get('type') in ('user', 'assistant') and 'message' in entry:
-                        messages.append(entry['message'])
+                    if entry.get("type") in ("user", "assistant") and "message" in entry:
+                        messages.append(entry["message"])
                 except json.JSONDecodeError:
                     continue
         return messages
@@ -150,7 +150,7 @@ class LocalSessionStorage(SessionStorageBackend):
     Reads from ~/.claude/projects/ directory structure used by Claude SDK.
     """
 
-    def __init__(self, base_dir: Optional[Path] = None):
+    def __init__(self, base_dir: Path | None = None):
         self.base_dir = base_dir or Path.home() / ".claude" / "projects"
         logger.info(f"LocalSessionStorage initialized with base_dir: {self.base_dir}")
 
@@ -159,7 +159,7 @@ class LocalSessionStorage(SessionStorageBackend):
         session_file = self.base_dir / f"{session_id}.jsonl"
         session_file.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(session_file, 'w') as f:
+        with open(session_file, "w") as f:
             f.write(content)
 
         stat = session_file.stat()
@@ -175,7 +175,7 @@ class LocalSessionStorage(SessionStorageBackend):
             raw_content=content,
         )
 
-    async def get_session(self, session_id: str) -> Optional[SessionData]:
+    async def get_session(self, session_id: str) -> SessionData | None:
         """Get session by ID, searching recursively in base_dir."""
         if not self.base_dir.exists():
             return None
@@ -189,7 +189,7 @@ class LocalSessionStorage(SessionStorageBackend):
             return None
 
         try:
-            with open(session_file, 'r') as f:
+            with open(session_file) as f:
                 content = f.read()
 
             stat = session_file.stat()
@@ -208,7 +208,7 @@ class LocalSessionStorage(SessionStorageBackend):
             logger.error(f"Error reading session {session_id}: {e}")
             return None
 
-    async def list_sessions(self) -> List[SessionInfo]:
+    async def list_sessions(self) -> list[SessionInfo]:
         """List all sessions in the base directory."""
         sessions = []
 
@@ -221,17 +221,19 @@ class LocalSessionStorage(SessionStorageBackend):
                 session_id = session_file.stem
 
                 # Read file to extract title
-                with open(session_file, 'r') as f:
+                with open(session_file) as f:
                     content = f.read()
                 title = self.extract_title_from_content(content)
 
-                sessions.append(SessionInfo(
-                    session_id=session_id,
-                    title=title or session_id[:8] + "...",
-                    created_at=str(stat.st_ctime),
-                    modified_at=str(stat.st_mtime),
-                    storage_path=str(session_file),
-                ))
+                sessions.append(
+                    SessionInfo(
+                        session_id=session_id,
+                        title=title or session_id[:8] + "...",
+                        created_at=str(stat.st_ctime),
+                        modified_at=str(stat.st_mtime),
+                        storage_path=str(session_file),
+                    )
+                )
             except Exception as e:
                 logger.warning(f"Error reading session file {session_file}: {e}")
                 continue
@@ -251,7 +253,7 @@ class LocalSessionStorage(SessionStorageBackend):
             # Create new if not exists
             return await self.create_session(session_id, content)
 
-        with open(session_file, 'w') as f:
+        with open(session_file, "w") as f:
             f.write(content)
 
         stat = session_file.stat()
@@ -293,24 +295,19 @@ class S3SessionStorage(SessionStorageBackend):
         self,
         bucket_name: str,
         prefix: str = "sessions/",
-        region_name: Optional[str] = None,
+        region_name: str | None = None,
     ):
         import boto3
         from botocore.config import Config
 
         self.bucket_name = bucket_name
-        self.prefix = prefix.rstrip('/') + '/' if prefix else ""
+        self.prefix = prefix.rstrip("/") + "/" if prefix else ""
 
         # Configure boto3 client with retries
-        config = Config(
-            retries={
-                'max_attempts': 3,
-                'mode': 'adaptive'
-            }
-        )
+        config = Config(retries={"max_attempts": 3, "mode": "adaptive"})
 
         self.s3_client = boto3.client(
-            's3',
+            "s3",
             region_name=region_name,
             config=config,
         )
@@ -330,11 +327,11 @@ class S3SessionStorage(SessionStorageBackend):
         self.s3_client.put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=content.encode('utf-8'),
-            ContentType='application/x-jsonlines',
+            Body=content.encode("utf-8"),
+            ContentType="application/x-jsonlines",
             Metadata={
-                'created_at': now,
-            }
+                "created_at": now,
+            },
         )
 
         messages = self.parse_messages_from_content(content)
@@ -349,7 +346,7 @@ class S3SessionStorage(SessionStorageBackend):
             raw_content=content,
         )
 
-    async def get_session(self, session_id: str) -> Optional[SessionData]:
+    async def get_session(self, session_id: str) -> SessionData | None:
         """Get session from S3 by ID."""
         from botocore.exceptions import ClientError
 
@@ -361,9 +358,9 @@ class S3SessionStorage(SessionStorageBackend):
                 Key=key,
             )
 
-            content = response['Body'].read().decode('utf-8')
-            last_modified = response.get('LastModified')
-            metadata = response.get('Metadata', {})
+            content = response["Body"].read().decode("utf-8")
+            last_modified = response.get("LastModified")
+            metadata = response.get("Metadata", {})
 
             messages = self.parse_messages_from_content(content)
             title = self.extract_title_from_content(content)
@@ -372,17 +369,17 @@ class S3SessionStorage(SessionStorageBackend):
                 session_id=session_id,
                 messages=messages,
                 title=title,
-                created_at=metadata.get('created_at', str(last_modified) if last_modified else None),
+                created_at=metadata.get("created_at", str(last_modified) if last_modified else None),
                 modified_at=str(last_modified) if last_modified else None,
                 raw_content=content,
             )
         except ClientError as e:
-            if e.response['Error']['Code'] == 'NoSuchKey':
+            if e.response["Error"]["Code"] == "NoSuchKey":
                 return None
             logger.error(f"Error getting session {session_id} from S3: {e}")
             raise
 
-    async def list_sessions(self) -> List[SessionInfo]:
+    async def list_sessions(self) -> list[SessionInfo]:
         """List all sessions in the S3 bucket with the configured prefix."""
         from botocore.exceptions import ClientError
 
@@ -392,22 +389,22 @@ class S3SessionStorage(SessionStorageBackend):
         try:
             while True:
                 list_kwargs = {
-                    'Bucket': self.bucket_name,
-                    'Prefix': self.prefix,
+                    "Bucket": self.bucket_name,
+                    "Prefix": self.prefix,
                 }
                 if continuation_token:
-                    list_kwargs['ContinuationToken'] = continuation_token
+                    list_kwargs["ContinuationToken"] = continuation_token
 
                 response = self.s3_client.list_objects_v2(**list_kwargs)
 
-                for obj in response.get('Contents', []):
-                    key = obj['Key']
-                    if not key.endswith('.jsonl'):
+                for obj in response.get("Contents", []):
+                    key = obj["Key"]
+                    if not key.endswith(".jsonl"):
                         continue
 
                     # Extract session_id from key
-                    filename = key[len(self.prefix):] if key.startswith(self.prefix) else key
-                    session_id = filename.rsplit('.jsonl', 1)[0]
+                    filename = key[len(self.prefix) :] if key.startswith(self.prefix) else key
+                    session_id = filename.rsplit(".jsonl", 1)[0]
 
                     # Get object to read content for title
                     try:
@@ -415,26 +412,28 @@ class S3SessionStorage(SessionStorageBackend):
                             Bucket=self.bucket_name,
                             Key=key,
                         )
-                        content = obj_response['Body'].read().decode('utf-8')
+                        content = obj_response["Body"].read().decode("utf-8")
                         title = self.extract_title_from_content(content)
-                        metadata = obj_response.get('Metadata', {})
-                        created_at = metadata.get('created_at')
+                        metadata = obj_response.get("Metadata", {})
+                        created_at = metadata.get("created_at")
                     except Exception as e:
                         logger.warning(f"Error reading session content for {session_id}: {e}")
                         title = None
                         created_at = None
 
-                    sessions.append(SessionInfo(
-                        session_id=session_id,
-                        title=title or session_id[:8] + "...",
-                        created_at=created_at or str(obj.get('LastModified')),
-                        modified_at=str(obj.get('LastModified')),
-                        storage_path=f"s3://{self.bucket_name}/{key}",
-                    ))
+                    sessions.append(
+                        SessionInfo(
+                            session_id=session_id,
+                            title=title or session_id[:8] + "...",
+                            created_at=created_at or str(obj.get("LastModified")),
+                            modified_at=str(obj.get("LastModified")),
+                            storage_path=f"s3://{self.bucket_name}/{key}",
+                        )
+                    )
 
-                if not response.get('IsTruncated'):
+                if not response.get("IsTruncated"):
                     break
-                continuation_token = response.get('NextContinuationToken')
+                continuation_token = response.get("NextContinuationToken")
 
         except ClientError as e:
             logger.error(f"Error listing sessions from S3: {e}")
@@ -457,8 +456,8 @@ class S3SessionStorage(SessionStorageBackend):
                 Bucket=self.bucket_name,
                 Key=key,
             )
-            metadata = head_response.get('Metadata', {})
-            created_at = metadata.get('created_at')
+            metadata = head_response.get("Metadata", {})
+            created_at = metadata.get("created_at")
         except ClientError:
             pass  # Object doesn't exist, will use current time
 
@@ -470,11 +469,11 @@ class S3SessionStorage(SessionStorageBackend):
         self.s3_client.put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=content.encode('utf-8'),
-            ContentType='application/x-jsonlines',
+            Body=content.encode("utf-8"),
+            ContentType="application/x-jsonlines",
             Metadata={
-                'created_at': created_at,
-            }
+                "created_at": created_at,
+            },
         )
 
         messages = self.parse_messages_from_content(content)
@@ -509,14 +508,14 @@ class S3SessionStorage(SessionStorageBackend):
             )
             return True
         except ClientError as e:
-            if e.response['Error']['Code'] in ('404', 'NoSuchKey'):
+            if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
                 return False
             logger.error(f"Error deleting session {session_id} from S3: {e}")
             raise
 
 
 # Singleton storage instance
-_storage_instance: Optional[SessionStorageBackend] = None
+_storage_instance: SessionStorageBackend | None = None
 
 
 def get_session_storage() -> SessionStorageBackend:
@@ -533,15 +532,15 @@ def get_session_storage() -> SessionStorageBackend:
     if _storage_instance is not None:
         return _storage_instance
 
-    bucket_name = os.environ.get('SESSION_BUCKET_NAME')
+    bucket_name = os.environ.get("SESSION_BUCKET_NAME")
 
     if bucket_name:
         try:
             # Try to import boto3 and create S3 storage
             import boto3  # noqa: F401
 
-            prefix = os.environ.get('SESSION_BUCKET_PREFIX', 'sessions/')
-            region = os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION')
+            prefix = os.environ.get("SESSION_BUCKET_PREFIX", "sessions/")
+            region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 
             _storage_instance = S3SessionStorage(
                 bucket_name=bucket_name,
