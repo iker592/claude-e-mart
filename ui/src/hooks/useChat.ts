@@ -1,5 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Message, ChatEvent, ToolCall, ContentBlock } from "../types/chat";
+import { useSessionStore } from "../stores/sessionStore";
 
 // Use environment variable or default to same-origin (for CloudFront deployment)
 // In production, CloudFront proxies /api/* to the API Gateway
@@ -13,8 +14,21 @@ export function useChat(options: UseChatOptions = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(options.initialSessionId || null);
+  const { setActiveSession, updateSessionStatus } = useSessionStore();
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Update active session when sessionId changes
+  useEffect(() => {
+    setActiveSession(sessionId);
+  }, [sessionId, setActiveSession]);
 
   const sendMessage = useCallback(async (content: string) => {
+    // Cancel any existing stream
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
@@ -39,6 +53,7 @@ export function useChat(options: UseChatOptions = {}) {
           message: content,
           ...(sessionId && { session_id: sessionId })
         }),
+        signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
@@ -70,6 +85,7 @@ export function useChat(options: UseChatOptions = {}) {
               // Handle session initialization
               if (event.type === "session_init" && event.session_id) {
                 setSessionId(event.session_id);
+                updateSessionStatus(event.session_id, 'running');
                 continue;
               }
 
@@ -168,6 +184,9 @@ export function useChat(options: UseChatOptions = {}) {
                 }
               } else if (event.type === "error") {
                 assistantContent += `\n\nError: ${event.content}`;
+                if (sessionId) {
+                  updateSessionStatus(sessionId, 'error');
+                }
                 setMessages((prev) => {
                   const updated = [...prev];
                   const lastIdx = updated.findIndex((m) => m.id === assistantId);
@@ -179,6 +198,11 @@ export function useChat(options: UseChatOptions = {}) {
                   }
                   return updated;
                 });
+              } else if (event.type === "result") {
+                // Mark session as completed when result event is received
+                if (sessionId) {
+                  updateSessionStatus(sessionId, 'completed');
+                }
               }
             } catch {
               // Skip malformed JSON
@@ -187,6 +211,13 @@ export function useChat(options: UseChatOptions = {}) {
         }
       }
     } catch (error) {
+      // Handle intentional abort - don't update state
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      if (sessionId) {
+        updateSessionStatus(sessionId, 'error');
+      }
       const errorMessage: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -197,14 +228,25 @@ export function useChat(options: UseChatOptions = {}) {
     } finally {
       setIsLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, updateSessionStatus]);
 
   const resetSession = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     setMessages([]);
     setSessionId(null);
+    setIsLoading(false);
   }, []);
 
   const loadSession = useCallback(async (newSessionId: string) => {
+    // Cancel any existing stream
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setMessages([]);  // Clear immediately before loading
     setIsLoading(true);
     try {
       const response = await fetch(`${API_URL}/api/sessions/${newSessionId}`);

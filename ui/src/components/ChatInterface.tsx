@@ -1,14 +1,85 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useChat } from "../hooks/useChat";
 import { useTheme } from "../hooks/useTheme";
+import { useNotifications } from "../hooks/useNotifications";
+import { useSessionStore } from "../stores/sessionStore";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { SessionSidebar } from "./SessionSidebar";
+import { PendingActionModal } from "./PendingActionModal";
+
+// Toast notification component
+function ToastNotification({
+  message,
+  sessionId,
+  onDismiss,
+  onNavigate,
+}: {
+  message: string;
+  sessionId: string;
+  onDismiss: () => void;
+  onNavigate: () => void;
+}) {
+  return (
+    <div className="fixed bottom-24 right-4 z-50 animate-slide-in-right">
+      <div
+        className="bg-orange-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 cursor-pointer hover:bg-orange-600 transition-colors"
+        onClick={onNavigate}
+      >
+        <div className="flex-1">
+          <div className="font-medium">Agent needs attention</div>
+          <div className="text-sm text-orange-100">{message}</div>
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
+          className="p-1 hover:bg-orange-700 rounded"
+          aria-label="Dismiss"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function ChatInterface() {
   const { messages, isLoading, sendMessage, sessionId, resetSession, loadSession } = useChat();
   const { theme, toggleTheme } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [knownSessionIds, setKnownSessionIds] = useState<string[]>([]);
+  const [toast, setToast] = useState<{ sessionId: string; message: string } | null>(null);
+
+  // Get session state from store
+  const { sessions: sessionStates, setPendingAction } = useSessionStore();
+  const activeSessionState = sessionId ? sessionStates[sessionId] : null;
+  const showPendingModal = activeSessionState?.status === 'waiting_user' && activeSessionState?.pendingAction;
+
+  // Track known session IDs
+  useEffect(() => {
+    if (sessionId && !knownSessionIds.includes(sessionId)) {
+      setKnownSessionIds((prev) => [...prev, sessionId]);
+    }
+  }, [sessionId, knownSessionIds]);
+
+  // Subscribe to notifications for all known sessions
+  useNotifications({
+    sessionIds: knownSessionIds,
+    onNotification: (event) => {
+      if (event.type === 'needs_attention' && event.session_id !== sessionId) {
+        setToast({
+          sessionId: event.session_id,
+          message: event.pending_action?.title || 'Agent needs attention',
+        });
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => setToast(null), 5000);
+      }
+    },
+  });
 
   const handleNewChat = () => {
     resetSession();
@@ -16,6 +87,13 @@ export function ChatInterface() {
 
   const handleSelectSession = (selectedSessionId: string) => {
     loadSession(selectedSessionId);
+  };
+
+  const handleToastNavigate = () => {
+    if (toast) {
+      loadSession(toast.sessionId);
+      setToast(null);
+    }
   };
 
   return (
@@ -111,6 +189,26 @@ export function ChatInterface() {
       <MessageList messages={messages} isLoading={isLoading} />
 
       <ChatInput onSend={sendMessage} disabled={isLoading} />
+
+      {/* Toast notification for background session alerts */}
+      {toast && (
+        <ToastNotification
+          message={toast.message}
+          sessionId={toast.sessionId}
+          onDismiss={() => setToast(null)}
+          onNavigate={handleToastNavigate}
+        />
+      )}
+
+      {/* Pending action modal for current session */}
+      {showPendingModal && activeSessionState?.pendingAction && sessionId && (
+        <PendingActionModal
+          sessionId={sessionId}
+          action={activeSessionState.pendingAction}
+          onClose={() => setPendingAction(sessionId, null)}
+          onResolved={() => setPendingAction(sessionId, null)}
+        />
+      )}
     </div>
   );
 }
