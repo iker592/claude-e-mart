@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from models import AgentState
+
 logger = logging.getLogger(__name__)
 
 
@@ -103,6 +105,16 @@ class SessionStorageBackend(ABC):
     @abstractmethod
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session. Returns True if deleted, False if not found."""
+        pass
+
+    @abstractmethod
+    async def update_agent_state(self, session_id: str, state: AgentState) -> None:
+        """Update/store the agent state for a session."""
+        pass
+
+    @abstractmethod
+    async def get_agent_state(self, session_id: str) -> AgentState | None:
+        """Retrieve the agent state for a session. Returns None if not found."""
         pass
 
     @staticmethod
@@ -283,6 +295,50 @@ class LocalSessionStorage(SessionStorageBackend):
                 return False
 
         return False
+
+    async def update_agent_state(self, session_id: str, state: AgentState) -> None:
+        """Store agent state as {session_id}.state.json in session directory."""
+        # Find the session file to determine the directory
+        session_file = None
+        for file in self.base_dir.rglob(f"{session_id}.jsonl"):
+            session_file = file
+            break
+
+        if session_file:
+            state_file = session_file.with_suffix(".state.json")
+        else:
+            # Create in base_dir if session doesn't exist yet
+            state_file = self.base_dir / f"{session_id}.state.json"
+            state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with open(state_file, "w") as f:
+                json.dump(state.to_dict(), f)
+        except Exception as e:
+            logger.error(f"Error saving agent state for {session_id}: {e}")
+            raise
+
+    async def get_agent_state(self, session_id: str) -> AgentState | None:
+        """Retrieve agent state from {session_id}.state.json."""
+        if not self.base_dir.exists():
+            return None
+
+        # Search for state file
+        state_file = None
+        for file in self.base_dir.rglob(f"{session_id}.state.json"):
+            state_file = file
+            break
+
+        if not state_file or not state_file.exists():
+            return None
+
+        try:
+            with open(state_file) as f:
+                data = json.load(f)
+            return AgentState.from_dict(data)
+        except Exception as e:
+            logger.error(f"Error reading agent state for {session_id}: {e}")
+            return None
 
 
 class S3SessionStorage(SessionStorageBackend):
@@ -512,6 +568,48 @@ class S3SessionStorage(SessionStorageBackend):
                 return False
             logger.error(f"Error deleting session {session_id} from S3: {e}")
             raise
+
+    def _get_state_key(self, session_id: str) -> str:
+        """Get the S3 object key for agent state."""
+        return f"{self.prefix}{session_id}.state.json"
+
+    async def update_agent_state(self, session_id: str, state: AgentState) -> None:
+        """Store agent state as {prefix}{session_id}.state.json in S3."""
+        key = self._get_state_key(session_id)
+
+        try:
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Body=json.dumps(state.to_dict()).encode("utf-8"),
+                ContentType="application/json",
+            )
+        except Exception as e:
+            logger.error(f"Error saving agent state for {session_id} to S3: {e}")
+            raise
+
+    async def get_agent_state(self, session_id: str) -> AgentState | None:
+        """Retrieve agent state from {prefix}{session_id}.state.json in S3."""
+        from botocore.exceptions import ClientError
+
+        key = self._get_state_key(session_id)
+
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=key,
+            )
+            content = response["Body"].read().decode("utf-8")
+            data = json.loads(content)
+            return AgentState.from_dict(data)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                return None
+            logger.error(f"Error getting agent state for {session_id} from S3: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error parsing agent state for {session_id}: {e}")
+            return None
 
 
 # Singleton storage instance

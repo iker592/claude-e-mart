@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Session } from "../types/chat";
+import { useSessionStore } from "../stores/sessionStore";
+import type { AgentStatus } from "../stores/sessionStore";
 
 // Use environment variable or default to same-origin (for CloudFront deployment)
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -18,6 +20,24 @@ interface APISession {
   created_at: string;
   modified_at: string;
   file_path: string;
+}
+
+// Status indicator component
+function StatusIndicator({ status }: { status: AgentStatus }) {
+  const colors: Record<AgentStatus, string> = {
+    idle: 'bg-gray-400',
+    running: 'bg-green-500',
+    waiting_user: 'bg-orange-500 animate-pulse',
+    completed: 'bg-blue-500',
+    error: 'bg-red-500',
+  };
+
+  return (
+    <span
+      className={`w-2 h-2 rounded-full flex-shrink-0 ${colors[status] || 'bg-gray-400'}`}
+      title={status}
+    />
+  );
 }
 
 // Parse timestamp that can be either Unix seconds or ISO string
@@ -50,6 +70,11 @@ export function SessionSidebar({
 }: SessionSidebarProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const { sessions: sessionStates, getSessionsNeedingAttention } = useSessionStore();
+
+  // Count sessions needing attention
+  const sessionsNeedingAttention = getSessionsNeedingAttention();
+  const attentionCount = sessionsNeedingAttention.length;
 
   // Fetch sessions when sidebar opens or when a new session is created
   useEffect(() => {
@@ -134,9 +159,16 @@ export function SessionSidebar({
             className="flex items-center justify-between p-4"
             style={{ borderBottom: "1px solid var(--border-color)" }}
           >
-            <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-              Chat History
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+                Chat History
+              </h2>
+              {attentionCount > 0 && (
+                <span className="bg-orange-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                  {attentionCount}
+                </span>
+              )}
+            </div>
             <button
               onClick={onClose}
               className="p-1 rounded-md transition-colors hover:opacity-70"
@@ -200,37 +232,52 @@ export function SessionSidebar({
               </div>
             ) : (
               <ul className="space-y-1 p-2">
-                {sessions.map((session) => (
-                  <li key={session.id}>
-                    <button
-                      onClick={() => handleSelectSession(session.id)}
-                      className="w-full text-left px-3 py-2 rounded-lg transition-colors"
-                      style={{
-                        backgroundColor:
-                          currentSessionId === session.id
-                            ? "var(--accent)"
-                            : "transparent",
-                        color:
-                          currentSessionId === session.id
-                            ? "white"
-                            : "var(--text-primary)",
-                      }}
-                    >
-                      <div className="font-medium truncate">{session.title}</div>
-                      <div
-                        className="text-xs"
+                {sessions.map((session) => {
+                  const sessionState = sessionStates[session.id];
+                  const status = sessionState?.status || 'idle';
+                  const needsAttention = status === 'waiting_user';
+
+                  return (
+                    <li key={session.id}>
+                      <button
+                        onClick={() => handleSelectSession(session.id)}
+                        className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                          needsAttention && currentSessionId !== session.id
+                            ? 'ring-2 ring-orange-500 ring-inset'
+                            : ''
+                        }`}
                         style={{
+                          backgroundColor:
+                            currentSessionId === session.id
+                              ? "var(--accent)"
+                              : needsAttention
+                              ? "rgba(249, 115, 22, 0.1)"
+                              : "transparent",
                           color:
                             currentSessionId === session.id
-                              ? "rgba(255,255,255,0.7)"
-                              : "var(--text-muted)",
+                              ? "white"
+                              : "var(--text-primary)",
                         }}
                       >
-                        {formatDate(session.lastMessageAt)}
-                      </div>
-                    </button>
-                  </li>
-                ))}
+                        <div className="flex items-center gap-2">
+                          <StatusIndicator status={status} />
+                          <span className="font-medium truncate flex-1">{session.title}</span>
+                        </div>
+                        <div
+                          className="text-xs ml-4"
+                          style={{
+                            color:
+                              currentSessionId === session.id
+                                ? "rgba(255,255,255,0.7)"
+                                : "var(--text-muted)",
+                          }}
+                        >
+                          {formatDate(session.lastMessageAt)}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

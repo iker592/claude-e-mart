@@ -10,6 +10,7 @@ Usage:
     uv run uvicorn server:app --reload --port 8000
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -29,7 +30,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from agent_manager import AgentManager
 from config import get_provider_info, load_config
+from models import AgentStatus
 from session_storage import get_session_storage
 
 # Configure logging to output INFO level to stdout
@@ -136,7 +139,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to instrument FastAPI: {e}")
 
+    # Start AgentManager
+    manager = AgentManager.get_instance()
+    await manager.start()
+
     yield
+
+    # Stop AgentManager
+    await manager.stop()
 
     # Cleanup on shutdown
     if provider:
@@ -217,6 +227,14 @@ async def generate_events(message: str, session_id: str | None = None):
     collected_content = []  # Collect messages for session storage
     assistant_text = []  # Accumulate assistant response text
 
+    # Get or create agent in the manager for tracking
+    manager = AgentManager.get_instance()
+    managed_agent = None
+    if session_id:
+        managed_agent = manager.get_or_create_agent(session_id)
+        managed_agent.state.status = AgentStatus.RUNNING
+        managed_agent.state.progress_message = "Processing request..."
+
     try:
         logger.info(f"Starting Claude SDK client with options: {options}")
         async with ClaudeSDKClient(options=options) as client:
@@ -250,6 +268,11 @@ async def generate_events(message: str, session_id: str | None = None):
                                 # Update span with actual session ID
                                 if OTEL_AVAILABLE and chat_span and current_session_id:
                                     chat_span.set_attribute("actual_session_id", current_session_id)
+                                # Register with AgentManager if this is a new session
+                                if current_session_id and not managed_agent:
+                                    managed_agent = manager.get_or_create_agent(current_session_id)
+                                    managed_agent.state.status = AgentStatus.RUNNING
+                                    managed_agent.state.progress_message = "Processing request..."
                                 # Stream back the session_id in the first SSE event
                                 if current_session_id and not session_sent:
                                     yield {
@@ -352,6 +375,11 @@ async def generate_events(message: str, session_id: str | None = None):
                             except Exception as save_err:
                                 logger.error(f"Failed to save session: {save_err}")
 
+                        # Update agent status to completed
+                        if managed_agent:
+                            managed_agent.state.status = AgentStatus.COMPLETED
+                            managed_agent.state.progress_message = None
+
                         yield {
                             "data": json.dumps(
                                 {
@@ -375,6 +403,10 @@ async def generate_events(message: str, session_id: str | None = None):
         if OTEL_AVAILABLE and chat_span:
             chat_span.set_status(Status(StatusCode.ERROR, str(e)))
             chat_span.record_exception(e)
+        # Update agent status to error
+        if managed_agent:
+            managed_agent.state.status = AgentStatus.ERROR
+            managed_agent.state.progress_message = str(e)
         yield {"data": json.dumps({"type": "error", "content": str(e)})}
     finally:
         if chat_span:
@@ -436,3 +468,120 @@ async def get_session(session_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Multi-session workspace endpoints
+# ============================================================================
+
+
+class SessionStatusResponse(BaseModel):
+    """Response model for session status."""
+
+    session_id: str
+    status: str
+    pending_action: dict | None = None
+    progress_message: str | None = None
+
+
+class RespondRequest(BaseModel):
+    """Request model for submitting user response to agent."""
+
+    action_id: str
+    response: dict
+
+
+@app.get("/api/notifications")
+async def notifications_stream(session_ids: str):
+    """SSE stream for cross-session notifications."""
+    ids = [s.strip() for s in session_ids.split(",") if s.strip()]
+    manager = AgentManager.get_instance()
+
+    async def event_generator():
+        last_states: dict[str, dict] = {}
+
+        while True:
+            for session_id in ids:
+                agent = manager.get_agent(session_id)
+                if agent:
+                    current_state = agent.state.to_dict()
+                    last_state = last_states.get(session_id)
+
+                    # Emit if state changed
+                    if last_state != current_state:
+                        last_states[session_id] = current_state
+
+                        event_type = "status_update"
+                        if agent.state.status == AgentStatus.WAITING_USER:
+                            event_type = "needs_attention"
+
+                        yield {
+                            "event": "message",
+                            "data": json.dumps(
+                                {
+                                    "type": event_type,
+                                    "session_id": session_id,
+                                    "status": agent.state.status.value,
+                                    "pending_action": current_state.get("pending_action"),
+                                    "progress_message": agent.state.progress_message,
+                                }
+                            ),
+                        }
+
+            await asyncio.sleep(0.5)  # Poll every 500ms
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/sessions/status")
+async def get_sessions_status(session_ids: str) -> list[SessionStatusResponse]:
+    """Get status of multiple sessions (polling fallback)."""
+    ids = [s.strip() for s in session_ids.split(",") if s.strip()]
+    manager = AgentManager.get_instance()
+
+    results = []
+    for session_id in ids:
+        agent = manager.get_agent(session_id)
+        if agent:
+            state = agent.state
+            results.append(
+                SessionStatusResponse(
+                    session_id=session_id,
+                    status=state.status.value,
+                    pending_action=state.to_dict().get("pending_action"),
+                    progress_message=state.progress_message,
+                )
+            )
+        else:
+            results.append(
+                SessionStatusResponse(
+                    session_id=session_id,
+                    status="idle",
+                )
+            )
+
+    return results
+
+
+@app.post("/api/sessions/{session_id}/respond")
+async def submit_response(session_id: str, request: RespondRequest):
+    """Submit user response to waiting agent."""
+    manager = AgentManager.get_instance()
+    success = manager.submit_user_response(session_id, request.action_id, request.response)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Agent not found or not waiting for response")
+
+    return {"status": "ok"}
+
+
+@app.post("/api/sessions/{session_id}/cancel")
+async def cancel_agent(session_id: str):
+    """Cancel a running agent."""
+    manager = AgentManager.get_instance()
+    success = await manager.cancel_agent(session_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return {"status": "ok"}
